@@ -132,6 +132,8 @@ REGIONS = {
     "sur_brasil": [-58.0, -47.5, -34.0, -22.3],   # Parana + Santa Catarina + Rio Grande do Sul
     # Triple Frontera: N de Misiones + O de Santa Catarina + SO de Parana + E de Paraguay
     "triple_frontera": [-56.5, -51.8, -27.8, -24.0],
+    "santa_catarina": [-54.2, -48.0, -29.6, -25.7],   # Estado de Santa Catarina (BR)
+    "parana":         [-55.0, -47.8, -27.0, -22.2],   # Estado de Parana (BR)
 }
 DEFAULT_REGION = "completo"
 
