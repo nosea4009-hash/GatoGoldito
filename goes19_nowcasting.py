@@ -115,6 +115,14 @@ PRODUCTS = {
 }
 DEFAULT_PRODUCT = "ir"
 
+# --- Colormaps sugeridas de matplotlib (cualquier nombre valido tambien sirve) ---
+# Utiles para realces de satelite. Se pueden invertir con --invert-cmap.
+SUGGESTED_CMAPS = [
+    "rainbow", "jet", "turbo", "nipy_spectral", "gist_ncar", "gist_rainbow",
+    "gist_stern", "Spectral", "coolwarm", "hsv", "cubehelix",
+    "viridis", "inferno", "plasma", "magma", "cividis",
+]
+
 # --- Regiones predefinidas: extent [lon_min, lon_max, lat_min, lat_max] ---
 REGIONS = {
     "completo":   [-68.0, -52.0, -40.0, -22.0],   # Pampeana + Norte + Misiones
@@ -466,8 +474,15 @@ def plot_stations(ax, stations, extent, colored=False):
 # =============================================================================
 def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
               out_path, product, show_cities=True, stations=None,
-              station_color=False, base_data=None, base_ext=None):
+              station_color=False, base_data=None, base_ext=None,
+              cmap_name=None, invert_cmap=False):
     cmap, norm = product["cmap_fn"]()
+    # Override de colormap (--cmap) e inversion (--invert-cmap)
+    if cmap_name:
+        cmap = matplotlib.colormaps[cmap_name].copy()
+    if invert_cmap:
+        cmap = cmap.reversed()
+    cmap.set_bad((0, 0, 0, 0) if product.get("kind") == "sandwich" else "black")
 
     fig = plt.figure(figsize=(10, 11.3), facecolor="white")
 
@@ -581,7 +596,8 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
 # =============================================================================
 def render_one(target: dt.datetime, region: str, glm_minutes: int,
                product: str = DEFAULT_PRODUCT, tag: str = None,
-               stations=None, station_color=False):
+               stations=None, station_color=False,
+               cmap_name=None, invert_cmap=False):
     prod = PRODUCTS[product]
     extent = REGIONS[region]
     base_data = base_ext = None
@@ -601,7 +617,8 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
     out_path = os.path.join(OUT_DIR, f"GOES19_{prod['slug']}_{region}_{tag}.png")
     make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat, out_path, prod,
               stations=stations, station_color=station_color,
-              base_data=base_data, base_ext=base_ext)
+              base_data=base_data, base_ext=base_ext,
+              cmap_name=cmap_name, invert_cmap=invert_cmap)
     n_est = len([s for s in stations if extent[0] <= s["lon"] <= extent[1]
                  and extent[2] <= s["lat"] <= extent[3]]) if stations else 0
     print(f"  [OK] {out_path}  ({t_scan:%H:%M} UTC, {glm_lon.size} rayos, {n_est} estaciones)")
@@ -611,7 +628,7 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
 def render_animation(end: dt.datetime, region: str, glm_minutes: int,
                      frames: int, step_min: int, interval_ms: int,
                      product: str = DEFAULT_PRODUCT, stations=None,
-                     station_color=False):
+                     station_color=False, cmap_name=None, invert_cmap=False):
     """Genera varios PNG y los combina en un GIF."""
     pngs = []
     print(f"Generando {frames} cuadros (cada {step_min} min)...")
@@ -620,7 +637,8 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
         try:
             pngs.append(render_one(target, region, glm_minutes, product,
                                    tag=f"frame_{frames - 1 - i:02d}",
-                                   stations=stations, station_color=station_color))
+                                   stations=stations, station_color=station_color,
+                                   cmap_name=cmap_name, invert_cmap=invert_cmap))
         except Exception as e:
             print(f"  [skip] {target:%H:%M} UTC -> {e}")
     if len(pngs) < 2:
@@ -640,6 +658,38 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
     return gif_path
 
 
+def print_listing():
+    """Imprime el listado de variables, regiones y colormaps disponibles."""
+    line = "=" * 64
+    print(line)
+    print("  GOES-19 Nowcasting (TRP Meteorologia) - Opciones disponibles")
+    print(line)
+    print("\nVARIABLES / PRODUCTOS  (--product NOMBRE):")
+    for k, p in PRODUCTS.items():
+        marca = "  (default)" if k == DEFAULT_PRODUCT else ""
+        print(f"   {k:9s} -> {p['title']}{marca}")
+    print("\nREGIONES  (--region NOMBRE):")
+    for k, e in REGIONS.items():
+        print(f"   {k:16s} lon[{e[0]:.1f}, {e[1]:.1f}]  lat[{e[2]:.1f}, {e[3]:.1f}]")
+    print("\nCOLORMAPS sugeridas  (--cmap NOMBRE):")
+    for i in range(0, len(SUGGESTED_CMAPS), 4):
+        print("   " + "  ".join(f"{c:14s}" for c in SUGGESTED_CMAPS[i:i + 4]))
+    print("   (Tambien sirve cualquier otro colormap valido de matplotlib.)")
+    print("   --invert-cmap  -> invierte el colormap elegido (o el del producto).")
+    print("\nOTRAS OPCIONES:")
+    print("   --estaciones           Superpone el modelo de estaciones del SMN.")
+    print("   --estaciones-color     Estaciones coloreadas (T roja, Td verde).")
+    print("   --animate              Genera un GIF animado (--frames, --step).")
+    print("   --time \"YYYY-MM-DD HH:MM\"  Fecha/hora UTC (default: lo mas reciente).")
+    print("\nEJEMPLOS:")
+    print("   python goes19_nowcasting.py --list")
+    print("   python goes19_nowcasting.py --product ir --region norte --cmap turbo")
+    print("   python goes19_nowcasting.py --product ir --cmap rainbow --invert-cmap")
+    print("   python goes19_nowcasting.py --product sandwich --region triple_frontera \\")
+    print("          --estaciones --estaciones-color")
+    print(line)
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="GOES-19 Nowcasting (TRP Meteorologia)")
     p.add_argument("--time", default=None,
@@ -647,7 +697,13 @@ def parse_args(argv=None):
     p.add_argument("--region", default=DEFAULT_REGION, choices=list(REGIONS),
                    help="Region a plotear.")
     p.add_argument("--product", default=DEFAULT_PRODUCT, choices=list(PRODUCTS),
-                   help="Producto: ir (Topes de Nube B13) o visible (B2).")
+                   help="Producto: ir (Topes de Nube B13), visible (B2) o sandwich.")
+    p.add_argument("--cmap", default=None,
+                   help="Colormap de matplotlib a usar (ver --list). Default: el del producto.")
+    p.add_argument("--invert-cmap", action="store_true",
+                   help="Invierte el colormap (equivale a agregar '_r').")
+    p.add_argument("--list", action="store_true",
+                   help="Lista variables, regiones y colormaps disponibles y sale.")
     p.add_argument("--glm-window", type=int, default=GLM_MINUTES,
                    help="Minutos de rayos GLM a acumular (default 10).")
     p.add_argument("--estaciones", action="store_true",
@@ -665,6 +721,18 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+
+    # Listado de opciones y salir
+    if args.list:
+        print_listing()
+        return
+
+    # Validar colormap
+    if args.cmap and args.cmap not in matplotlib.colormaps:
+        print(f"[error] El colormap '{args.cmap}' no existe en matplotlib.")
+        print("        Usa --list para ver las colormaps sugeridas.")
+        return
+
     if args.time:
         target = dt.datetime.strptime(args.time, "%Y-%m-%d %H:%M").replace(tzinfo=dt.timezone.utc)
     else:
@@ -686,10 +754,12 @@ def main(argv=None):
     if args.animate:
         render_animation(target, args.region, args.glm_window,
                          args.frames, args.step, args.interval, args.product,
-                         stations=stations, station_color=args.estaciones_color)
+                         stations=stations, station_color=args.estaciones_color,
+                         cmap_name=args.cmap, invert_cmap=args.invert_cmap)
     else:
         render_one(target, args.region, args.glm_window, args.product,
-                   stations=stations, station_color=args.estaciones_color)
+                   stations=stations, station_color=args.estaciones_color,
+                   cmap_name=args.cmap, invert_cmap=args.invert_cmap)
 
 
 if __name__ == "__main__":
