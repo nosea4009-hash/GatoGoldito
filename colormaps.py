@@ -104,3 +104,25 @@ def visible_cmap():
     cmap.set_bad("black")
     norm = Normalize(vmin=VISIBLE_VMIN, vmax=VISIBLE_VMAX)
     return cmap, norm
+
+
+
+# =============================================================================
+#         RAINBOW IR (para el producto "sandwich": Visible + IR Banda 13)
+# =============================================================================
+# Reproduce el colorbar de referencia: -90 C = violeta, -20 C = rojo/rosa.
+# (matplotlib 'rainbow' orientado con el frio en violeta y el calido en rojo.)
+# set_bad transparente: los pixeles enmascarados (topes calidos) dejan ver el
+# canal visible debajo en el sandwich.
+
+RAINBOW_IR_VMIN = -90.0   # extremo frio (violeta)
+RAINBOW_IR_VMAX = -20.0   # extremo calido coloreado (rojo)
+RAINBOW_IR_TICKS = np.arange(-90.0, -19.0, 10.0)  # -90, -80, ..., -20
+
+
+def rainbow_ir_cmap():
+    """Devuelve (cmap, norm) rainbow para el IR del sandwich."""
+    cmap = matplotlib.colormaps["rainbow"].copy()
+    cmap.set_bad((0, 0, 0, 0))  # transparente (deja ver el visible debajo)
+    norm = Normalize(vmin=RAINBOW_IR_VMIN, vmax=RAINBOW_IR_VMAX)
+    return cmap, norm

@@ -52,7 +52,8 @@ import cartopy.feature as cfeature
 import metpy  # noqa: F401  (habilita el accessor .metpy en xarray)
 
 from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
-                       visible_cmap, VISIBLE_TICKS)
+                       visible_cmap, VISIBLE_TICKS,
+                       rainbow_ir_cmap, RAINBOW_IR_TICKS)
 from estaciones import load_stations
 
 warnings.filterwarnings("ignore")
@@ -98,6 +99,18 @@ PRODUCTS = {
         "cmap_fn": visible_cmap,
         "ticks": VISIBLE_TICKS,
         "extend": "neither",
+    },
+    "sandwich": {
+        "band": 13,              # IR de overlay (el visible B2 es la base)
+        "kind": "sandwich",
+        "slug": "Sandwich",
+        "title": "Sandwich (Visible + IR Banda 13)",
+        "cbar_label": "Temperatura de Topes de Nube (\u00b0C)",
+        "cmap_fn": rainbow_ir_cmap,
+        "ticks": RAINBOW_IR_TICKS,
+        "extend": "both",
+        "ir_threshold": -20.0,   # solo colorea topes mas frios que esto
+        "overlay_alpha": 0.85,   # transparencia del IR sobre el visible
     },
 }
 DEFAULT_PRODUCT = "ir"
@@ -377,16 +390,23 @@ def _wedge_marker(oktas):
     return MplPath.wedge(90 - 360 * frac, 90)
 
 
-def plot_stations(ax, stations, extent):
+def plot_stations(ax, stations, extent, colored=False):
     """Dibuja el modelo de estacion (nubosidad + barba de viento + T/Td/presion).
 
     Dibujo con matplotlib nativo (evita el StationPlot de MetPy, incompatible con
-    matplotlib reciente). Textos en Open Sans Bold, blancos con contorno negro.
+    matplotlib reciente). Textos en Open Sans Bold con contorno negro.
+    colored=False -> todo blanco. colored=True -> T en rojo, Td en verde, P en blanco.
     """
     sel = [s for s in stations
            if extent[0] <= s["lon"] <= extent[1] and extent[2] <= s["lat"] <= extent[3]]
     if not sel:
         return
+
+    # Colores de los valores
+    if colored:
+        c_temp, c_dew, c_pres = "#ff3b3b", "#36e23a", "#ffffff"
+    else:
+        c_temp = c_dew = c_pres = "#ffffff"
 
     stroke = [pe.withStroke(linewidth=1.6, foreground="black")]
     pc = ccrs.PlateCarree()
@@ -426,27 +446,27 @@ def plot_stations(ax, stations, extent):
         px, py = ax.projection.transform_point(s["lon"], s["lat"], pc)
         if not (np.isfinite(px) and np.isfinite(py)):
             continue
-        common = dict(textcoords="offset points", color="white",
-                      fontproperties=FONT_BOLD, fontsize=8.5,
-                      path_effects=stroke, zorder=10, clip_on=True)
+        common = dict(textcoords="offset points", fontproperties=FONT_BOLD,
+                      fontsize=8.5, path_effects=stroke, zorder=10, clip_on=True)
         t, td, p = s["temp_c"], s["dewpoint_c"], s["pressure_hpa"]
         if np.isfinite(t):
             ax.annotate(f"{t:.0f}", (px, py), xytext=(-10, 7),
-                        ha="right", va="bottom", **common)
+                        ha="right", va="bottom", color=c_temp, **common)
         if np.isfinite(td):
             ax.annotate(f"{td:.0f}", (px, py), xytext=(-10, -9),
-                        ha="right", va="top", **common)
+                        ha="right", va="top", color=c_dew, **common)
         if np.isfinite(p):
             code = f"{int(round(p * 10)) % 1000:03d}"  # presion codificada (3 digitos)
             ax.annotate(code, (px, py), xytext=(10, 7),
-                        ha="left", va="bottom", **common)
+                        ha="left", va="bottom", color=c_pres, **common)
 
 
 # =============================================================================
 #                              PLOTEO PRINCIPAL
 # =============================================================================
 def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
-              out_path, product, show_cities=True, stations=None):
+              out_path, product, show_cities=True, stations=None,
+              station_color=False, base_data=None, base_ext=None):
     cmap, norm = product["cmap_fn"]()
 
     fig = plt.figure(figsize=(10, 11.3), facecolor="white")
@@ -464,9 +484,20 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
         spine.set_edgecolor("black")
         spine.set_linewidth(1.2)
 
-    # Dato de satelite
-    ax.imshow(data, origin="upper", extent=ext_m, transform=geos,
-              cmap=cmap, norm=norm, interpolation="nearest", zorder=1)
+    # Capa base del sandwich: canal visible en escala de grises
+    if base_data is not None and base_ext is not None:
+        vcmap, vnorm = visible_cmap()
+        ax.imshow(base_data, origin="upper", extent=base_ext, transform=geos,
+                  cmap=vcmap, norm=vnorm, interpolation="nearest", zorder=0)
+
+    # Dato de satelite (overlay). En sandwich, enmascara los topes calidos.
+    plot_data = data
+    thr = product.get("ir_threshold")
+    if thr is not None:
+        plot_data = np.ma.masked_greater(data, thr)
+    ax.imshow(plot_data, origin="upper", extent=ext_m, transform=geos,
+              cmap=cmap, norm=norm, interpolation="nearest",
+              alpha=product.get("overlay_alpha", 1.0), zorder=1)
 
     # Geografia
     ax.add_feature(_roads(), linewidth=0.5, zorder=3, alpha=0.9)
@@ -505,7 +536,7 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
 
     # Modelo de estacion SMN (nubosidad + viento + T/Td/presion)
     if stations:
-        plot_stations(ax, stations, extent)
+        plot_stations(ax, stations, extent, colored=station_color)
 
     # --- Titulo ---
     fig.text(0.5, 0.945, f"GOES-19  \u00b7  {product['title']}",
@@ -550,17 +581,27 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
 # =============================================================================
 def render_one(target: dt.datetime, region: str, glm_minutes: int,
                product: str = DEFAULT_PRODUCT, tag: str = None,
-               stations=None):
+               stations=None, station_color=False):
     prod = PRODUCTS[product]
     extent = REGIONS[region]
-    abi_path, t_scan = find_abi(target, prod["band"])
-    data, ext_m, geos, t_scan = load_abi_subset(
-        abi_path, extent, kind=prod["kind"], gamma=prod.get("gamma", 1.0))
+    base_data = base_ext = None
+    if prod["kind"] == "sandwich":
+        # Overlay IR (Banda 13) + base Visible (Banda 2)
+        ir_path, t_scan = find_abi(target, 13)
+        data, ext_m, geos, t_scan = load_abi_subset(ir_path, extent, kind="temp")
+        vis_path, _ = find_abi(target, 2)
+        base_data, base_ext, _g, _t = load_abi_subset(
+            vis_path, extent, kind="reflectance", gamma=2.0)
+    else:
+        abi_path, t_scan = find_abi(target, prod["band"])
+        data, ext_m, geos, t_scan = load_abi_subset(
+            abi_path, extent, kind=prod["kind"], gamma=prod.get("gamma", 1.0))
     glm_lon, glm_lat = load_glm_flashes(t_scan, glm_minutes)
     tag = tag or f"{t_scan:%Y%m%d_%H%M}"
     out_path = os.path.join(OUT_DIR, f"GOES19_{prod['slug']}_{region}_{tag}.png")
     make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat, out_path, prod,
-              stations=stations)
+              stations=stations, station_color=station_color,
+              base_data=base_data, base_ext=base_ext)
     n_est = len([s for s in stations if extent[0] <= s["lon"] <= extent[1]
                  and extent[2] <= s["lat"] <= extent[3]]) if stations else 0
     print(f"  [OK] {out_path}  ({t_scan:%H:%M} UTC, {glm_lon.size} rayos, {n_est} estaciones)")
@@ -569,7 +610,8 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
 
 def render_animation(end: dt.datetime, region: str, glm_minutes: int,
                      frames: int, step_min: int, interval_ms: int,
-                     product: str = DEFAULT_PRODUCT, stations=None):
+                     product: str = DEFAULT_PRODUCT, stations=None,
+                     station_color=False):
     """Genera varios PNG y los combina en un GIF."""
     pngs = []
     print(f"Generando {frames} cuadros (cada {step_min} min)...")
@@ -577,7 +619,8 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
         target = end - dt.timedelta(minutes=step_min * i)
         try:
             pngs.append(render_one(target, region, glm_minutes, product,
-                                   tag=f"frame_{frames - 1 - i:02d}", stations=stations))
+                                   tag=f"frame_{frames - 1 - i:02d}",
+                                   stations=stations, station_color=station_color))
         except Exception as e:
             print(f"  [skip] {target:%H:%M} UTC -> {e}")
     if len(pngs) < 2:
@@ -609,6 +652,8 @@ def parse_args(argv=None):
                    help="Minutos de rayos GLM a acumular (default 10).")
     p.add_argument("--estaciones", action="store_true",
                    help="Superponer modelo de estaciones del SMN.")
+    p.add_argument("--estaciones-color", action="store_true",
+                   help="Estaciones coloreadas (T en rojo, Td en verde, P en blanco).")
     p.add_argument("--obs-file", default=None,
                    help="Archivo de observaciones SMN (default: el estado_tiempo*.txt mas reciente).")
     p.add_argument("--animate", action="store_true", help="Generar GIF animado.")
@@ -641,10 +686,10 @@ def main(argv=None):
     if args.animate:
         render_animation(target, args.region, args.glm_window,
                          args.frames, args.step, args.interval, args.product,
-                         stations=stations)
+                         stations=stations, station_color=args.estaciones_color)
     else:
         render_one(target, args.region, args.glm_window, args.product,
-                   stations=stations)
+                   stations=stations, station_color=args.estaciones_color)
 
 
 if __name__ == "__main__":
