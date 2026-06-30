@@ -171,3 +171,33 @@ def nighttime_microphysics_rgb(t12_3, t10_3, t3_9):
     bad = ~(np.isfinite(t12_3) & np.isfinite(t10_3) & np.isfinite(t3_9))
     rgb[bad] = 0.0
     return rgb
+
+
+
+# =============================================================================
+#     VAPOR DE AGUA NIVELES MEDIOS (producto "wv_medio": Banda 9, 6.9 um)
+# =============================================================================
+# El vapor de agua se mide como TEMPERATURA DE BRILLO (en C). El canal de 6.9 um
+# "ve" la humedad de la media troposfera: aire seco (descendente) = mas calido,
+# aire humedo / topes de nube = mas frio.
+#
+# Colortable: WVCIMSS (CIMSS, Univ. de Wisconsin) -> la paleta estandar de WV.
+# Se obtiene desde MetPy (no esta registrada en matplotlib).
+#
+# Rango de brillo tipico del canal de WV (C): se realza ~ -75 (frio/humedo,
+# topes) a +5 (calido/seco). Ajustable con WV_VMIN / WV_VMAX.
+
+WV_VMIN = -75.0
+WV_VMAX = 5.0
+WV_TICKS = np.arange(-70.0, 6.0, 10.0)   # -70, -60, ..., 0
+
+
+def midlevel_wv_cmap():
+    """Devuelve (cmap, norm) para vapor de agua usando la colortable WVCIMSS."""
+    from metpy.plots import ctables  # registrada en MetPy, no en matplotlib
+    base = ctables.registry.get_colortable("WVCIMSS")
+    # Copia para poder fijar el color de 'sin dato' sin alterar el original
+    cmap = base.copy() if hasattr(base, "copy") else base
+    cmap.set_bad("black")
+    norm = Normalize(vmin=WV_VMIN, vmax=WV_VMAX)
+    return cmap, norm

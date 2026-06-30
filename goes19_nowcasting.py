@@ -54,7 +54,8 @@ import metpy  # noqa: F401  (habilita el accessor .metpy en xarray)
 from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        visible_cmap, VISIBLE_TICKS,
                        rainbow_ir_cmap, RAINBOW_IR_TICKS,
-                       nighttime_microphysics_rgb)
+                       nighttime_microphysics_rgb,
+                       midlevel_wv_cmap, WV_TICKS)
 from estaciones import load_stations
 
 warnings.filterwarnings("ignore")
@@ -112,6 +113,16 @@ PRODUCTS = {
         "extend": "both",
         "ir_threshold": -20.0,   # solo colorea topes mas frios que esto
         "overlay_alpha": 0.85,   # transparencia del IR sobre el visible
+    },
+    "wv_medio": {
+        "band": 9,
+        "kind": "temp",
+        "slug": "VaporMedio",
+        "title": "Vapor de Agua Niveles Medios (Banda 9, 6.9 \u00b5m)",
+        "cbar_label": "Temperatura de Brillo - Vapor de Agua (\u00b0C)",
+        "cmap_fn": midlevel_wv_cmap,
+        "ticks": WV_TICKS,
+        "extend": "both",
     },
     "noche": {
         # RGB Nighttime Microphysics (modo nocturno): combina 3 bandas IR.
