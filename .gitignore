@@ -1,0 +1,11 @@
+# Datos descargados (cache de NetCDF de GOES-19) y salidas generadas
+data/
+output/
+
+# Entorno virtual local (uv) - se reconstruye con environment.yml
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/

@@ -1,0 +1,25 @@
+# =============================================================================
+# Entorno Conda/Mamba para GOES-19 Nowcasting (TRP Meteorologia - Plots)
+# -----------------------------------------------------------------------------
+# Crearlo:    mamba env create -f environment.yml
+# Activarlo:  mamba activate goes
+# Ejecutar:   python goes19_nowcasting.py
+# =============================================================================
+name: goes
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - xarray
+  - matplotlib>=3.8
+  - cartopy
+  - metpy
+  - netcdf4
+  - s3fs
+  - pyproj
+  - shapely
+  - pillow
+  # (opcional) entorno interactivo tipo notebook en VS Code:
+  - jupyterlab
+  - ipykernel
