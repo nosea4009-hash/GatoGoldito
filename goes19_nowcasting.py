@@ -50,7 +50,8 @@ import cartopy.feature as cfeature
 
 import metpy  # noqa: F401  (habilita el accessor .metpy en xarray)
 
-from colormaps import cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX
+from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
+                       visible_cmap, VISIBLE_TICKS)
 
 warnings.filterwarnings("ignore")
 
@@ -67,12 +68,37 @@ os.makedirs(OUT_DIR, exist_ok=True)
 BUCKET = "noaa-goes19"
 ABI_PRODUCT = "ABI-L2-CMIPF"   # Cloud & Moisture Imagery, Full Disk
 GLM_PRODUCT = "GLM-L2-LCFA"    # Lightning Cluster-Filter Algorithm
-BAND = 13                      # Banda 13 = IR limpio (~10.3 um)
 
 # --- Marca / textos del plot ---
 BRAND_TEXT = "TRP Meteorologia - Plots"
-CBAR_LABEL = "Temperatura de Topes de Nube (\u00b0C)"
 EXPERIMENTAL_TEXT = "PRODUCTO EXPERIMENTAL"
+
+# --- Productos disponibles ----------------------------------------------------
+# kind: "temp" (Kelvin -> Celsius) o "reflectance" (0-1, con correccion gamma).
+PRODUCTS = {
+    "ir": {
+        "band": 13,
+        "kind": "temp",
+        "slug": "TopesNube",
+        "title": "Temperatura de Topes de Nube (Banda 13)",
+        "cbar_label": "Temperatura de Topes de Nube (\u00b0C)",
+        "cmap_fn": cloudtop_cmap,
+        "ticks": COLORBAR_TICKS,
+        "extend": "both",
+    },
+    "visible": {
+        "band": 2,
+        "kind": "reflectance",
+        "gamma": 2.0,            # aclara la imagen (reflectancia**(1/gamma))
+        "slug": "Visible",
+        "title": "Canal Visible (Banda 2, 0.64 \u00b5m)",
+        "cbar_label": "Reflectancia (Canal Visible)",
+        "cmap_fn": visible_cmap,
+        "ticks": VISIBLE_TICKS,
+        "extend": "neither",
+    },
+}
+DEFAULT_PRODUCT = "ir"
 
 # --- Regiones predefinidas: extent [lon_min, lon_max, lat_min, lat_max] ---
 REGIONS = {
@@ -217,15 +243,15 @@ def _download(key: str) -> str:
     return local
 
 
-def find_abi_band13(target: dt.datetime) -> tuple[str, dt.datetime]:
-    """Encuentra el archivo ABI Banda 13 cuyo inicio de escaneo es mas cercano a target."""
+def find_abi(target: dt.datetime, band: int) -> tuple[str, dt.datetime]:
+    """Encuentra el archivo ABI de la banda dada con inicio de escaneo mas cercano a target."""
     candidates = []
     for off in (-1, 0, 1):  # hora previa, actual y siguiente
         hour = target + dt.timedelta(hours=off)
-        for k in _list_hour(ABI_PRODUCT, hour, band=BAND):
+        for k in _list_hour(ABI_PRODUCT, hour, band=band):
             candidates.append((k, _parse_start_time(k)))
     if not candidates:
-        raise RuntimeError(f"No se hallaron archivos ABI B13 cerca de {target:%Y-%m-%d %H:%M} UTC")
+        raise RuntimeError(f"No se hallaron archivos ABI C{band:02d} cerca de {target:%Y-%m-%d %H:%M} UTC")
     # Solo escaneos ya completados (<= target + 1 min de tolerancia)
     valid = [(k, t) for k, t in candidates if t <= target + dt.timedelta(minutes=1)] or candidates
     key, t_scan = min(valid, key=lambda kt: abs((kt[1] - target).total_seconds()))
@@ -258,8 +284,12 @@ def load_glm_flashes(t_scan: dt.datetime, minutes: int = GLM_MINUTES):
 # =============================================================================
 #                          PROCESAMIENTO ABI
 # =============================================================================
-def load_abi_subset(path: str, extent, margin=1.5):
-    """Abre el ABI, recorta a la region y devuelve (data_C, extent_m, geos_crs, t_scan)."""
+def load_abi_subset(path: str, extent, kind="temp", gamma=1.0, margin=1.5):
+    """Abre el ABI, recorta a la region (lectura perezosa) y devuelve (data, extent_m, geos_crs, t_scan).
+
+    kind="temp"        -> convierte Kelvin a Celsius.
+    kind="reflectance" -> recorta a 0-1 y aplica correccion gamma.
+    """
     ds = xr.open_dataset(path, engine="netcdf4")
     dat = ds.metpy.parse_cf("CMI")
     geos = dat.metpy.cartopy_crs
@@ -285,15 +315,23 @@ def load_abi_subset(path: str, extent, margin=1.5):
     y = dat["y"].values
     ix = np.where((x >= xmin) & (x <= xmax))[0]
     iy = np.where((y >= ymin) & (y <= ymax))[0]
+    # isel + .values lee SOLO la porcion necesaria del disco (clave para Banda 2)
     sub = dat.isel(x=slice(int(ix.min()), int(ix.max()) + 1),
                    y=slice(int(iy.min()), int(iy.max()) + 1))
 
-    data_c = sub.values - 273.15  # Kelvin -> Celsius
+    raw = sub.values
+    if kind == "temp":
+        data = raw - 273.15  # Kelvin -> Celsius
+    else:  # reflectance
+        data = np.clip(raw, 0.0, 1.0)
+        if gamma and gamma != 1.0:
+            data = np.power(data, 1.0 / gamma)
+
     ext_m = [float(sub["x"].min()), float(sub["x"].max()),
              float(sub["y"].min()), float(sub["y"].max())]
     t_scan = _parse_start_time(os.path.basename(path))
     ds.close()
-    return data_c, ext_m, geos, t_scan
+    return data, ext_m, geos, t_scan
 
 
 # =============================================================================
@@ -314,9 +352,9 @@ def _roads():
 # =============================================================================
 #                              PLOTEO PRINCIPAL
 # =============================================================================
-def make_plot(data_c, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
-              out_path, show_cities=True):
-    cmap, norm = cloudtop_cmap()
+def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
+              out_path, product, show_cities=True):
+    cmap, norm = product["cmap_fn"]()
 
     fig = plt.figure(figsize=(10, 11.3), facecolor="white")
 
@@ -333,8 +371,8 @@ def make_plot(data_c, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
         spine.set_edgecolor("black")
         spine.set_linewidth(1.2)
 
-    # Dato de satelite (Temperatura de Topes de Nube)
-    ax.imshow(data_c, origin="upper", extent=ext_m, transform=geos,
+    # Dato de satelite
+    ax.imshow(data, origin="upper", extent=ext_m, transform=geos,
               cmap=cmap, norm=norm, interpolation="nearest", zorder=1)
 
     # Geografia
@@ -373,7 +411,7 @@ def make_plot(data_c, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
                         path_effects=stroke, zorder=7, va="bottom", ha="left")
 
     # --- Titulo ---
-    fig.text(0.5, 0.945, "GOES-19  \u00b7  Temperatura de Topes de Nube (Banda 13)",
+    fig.text(0.5, 0.945, f"GOES-19  \u00b7  {product['title']}",
              ha="center", va="center", fontproperties=FONT_BOLD, fontsize=15,
              color="black")
     fig.text(0.5, 0.918, f"{t_scan:%Y-%m-%d  %H:%M} UTC",
@@ -383,8 +421,8 @@ def make_plot(data_c, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
     # --- Barra de color ---
     cax = fig.add_axes([0.16, 0.115, 0.68, 0.018])
     cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap),
-                      cax=cax, orientation="horizontal", extend="both")
-    cb.set_ticks(COLORBAR_TICKS)
+                      cax=cax, orientation="horizontal", extend=product["extend"])
+    cb.set_ticks(product["ticks"])
     cb.ax.tick_params(labelsize=8, length=3)
     for lbl in cb.ax.get_xticklabels():
         lbl.set_fontproperties(FONT_REG)
@@ -395,7 +433,7 @@ def make_plot(data_c, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
              fontproperties=FONT_BOLD, fontsize=8, color="red")
 
     # Etiqueta de la variable ABAJO de la barra
-    fig.text(0.5, 0.082, CBAR_LABEL, ha="center", va="center",
+    fig.text(0.5, 0.082, product["cbar_label"], ha="center", va="center",
              fontproperties=FONT_BOLD, fontsize=11, color="black")
 
     # --- Marca abajo a la derecha ---
@@ -413,27 +451,31 @@ def make_plot(data_c, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
 # =============================================================================
 #                              ORQUESTACION
 # =============================================================================
-def render_one(target: dt.datetime, region: str, glm_minutes: int, tag: str = None):
+def render_one(target: dt.datetime, region: str, glm_minutes: int,
+               product: str = DEFAULT_PRODUCT, tag: str = None):
+    prod = PRODUCTS[product]
     extent = REGIONS[region]
-    abi_path, t_scan = find_abi_band13(target)
-    data_c, ext_m, geos, t_scan = load_abi_subset(abi_path, extent)
+    abi_path, t_scan = find_abi(target, prod["band"])
+    data, ext_m, geos, t_scan = load_abi_subset(
+        abi_path, extent, kind=prod["kind"], gamma=prod.get("gamma", 1.0))
     glm_lon, glm_lat = load_glm_flashes(t_scan, glm_minutes)
     tag = tag or f"{t_scan:%Y%m%d_%H%M}"
-    out_path = os.path.join(OUT_DIR, f"GOES19_TopesNube_{region}_{tag}.png")
-    make_plot(data_c, ext_m, geos, t_scan, extent, glm_lon, glm_lat, out_path)
+    out_path = os.path.join(OUT_DIR, f"GOES19_{prod['slug']}_{region}_{tag}.png")
+    make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat, out_path, prod)
     print(f"  [OK] {out_path}  ({t_scan:%H:%M} UTC, {glm_lon.size} rayos)")
     return out_path
 
 
 def render_animation(end: dt.datetime, region: str, glm_minutes: int,
-                     frames: int, step_min: int, interval_ms: int):
+                     frames: int, step_min: int, interval_ms: int,
+                     product: str = DEFAULT_PRODUCT):
     """Genera varios PNG y los combina en un GIF."""
     pngs = []
     print(f"Generando {frames} cuadros (cada {step_min} min)...")
     for i in range(frames - 1, -1, -1):
         target = end - dt.timedelta(minutes=step_min * i)
         try:
-            pngs.append(render_one(target, region, glm_minutes,
+            pngs.append(render_one(target, region, glm_minutes, product,
                                    tag=f"frame_{frames - 1 - i:02d}"))
         except Exception as e:
             print(f"  [skip] {target:%H:%M} UTC -> {e}")
@@ -446,7 +488,8 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
         print("Pillow no instalado; se generaron PNGs pero no el GIF.")
         return None
     imgs = [Image.open(p).convert("RGB") for p in pngs]
-    gif_path = os.path.join(OUT_DIR, f"GOES19_TopesNube_{region}_anim.gif")
+    slug = PRODUCTS[product]["slug"]
+    gif_path = os.path.join(OUT_DIR, f"GOES19_{slug}_{region}_anim.gif")
     imgs[0].save(gif_path, save_all=True, append_images=imgs[1:],
                  duration=interval_ms, loop=0)
     print(f"[GIF] {gif_path}")
@@ -454,11 +497,13 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
 
 
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="GOES-19 Nowcasting - Temperatura de Topes de Nube (TRP)")
+    p = argparse.ArgumentParser(description="GOES-19 Nowcasting (TRP Meteorologia)")
     p.add_argument("--time", default=None,
                    help='Fecha/hora UTC "YYYY-MM-DD HH:MM". Por defecto: ultimo disponible.')
     p.add_argument("--region", default=DEFAULT_REGION, choices=list(REGIONS),
                    help="Region a plotear.")
+    p.add_argument("--product", default=DEFAULT_PRODUCT, choices=list(PRODUCTS),
+                   help="Producto: ir (Topes de Nube B13) o visible (B2).")
     p.add_argument("--glm-window", type=int, default=GLM_MINUTES,
                    help="Minutos de rayos GLM a acumular (default 10).")
     p.add_argument("--animate", action="store_true", help="Generar GIF animado.")
@@ -475,12 +520,13 @@ def main(argv=None):
     else:
         target = dt.datetime.now(dt.timezone.utc)
 
-    print(f"GOES-19 | region={args.region} | objetivo={target:%Y-%m-%d %H:%M} UTC")
+    print(f"GOES-19 | producto={args.product} | region={args.region} | "
+          f"objetivo={target:%Y-%m-%d %H:%M} UTC")
     if args.animate:
         render_animation(target, args.region, args.glm_window,
-                         args.frames, args.step, args.interval)
+                         args.frames, args.step, args.interval, args.product)
     else:
-        render_one(target, args.region, args.glm_window)
+        render_one(target, args.region, args.glm_window, args.product)
 
 
 if __name__ == "__main__":

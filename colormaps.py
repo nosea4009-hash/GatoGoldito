@@ -14,6 +14,7 @@ Para cambiar colores, edita _RAW_PALETTE (formato identico al original).
 """
 
 import numpy as np
+import matplotlib
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 
 # --- Paleta original (tal cual fue provista): [posicion, [R, G, B, A]] --------
@@ -82,3 +83,24 @@ def cloudtop_cmap():
 
 # Marcas (ticks) de la barra de color (C): -90, -80, ..., 40
 COLORBAR_TICKS = np.arange(VMIN, VMAX + 1, 10)
+
+
+
+# =============================================================================
+#                  CANAL VISIBLE (Banda 2) - reflectancia
+# =============================================================================
+# El canal visible es REFLECTANCIA (0 a ~1), no temperatura. Se grafica en
+# escala de grises: oscuro = poca reflectancia (superficie/oceano),
+# claro = mucha reflectancia (nubes). Rango fijo 0 a 1.
+
+VISIBLE_VMIN = 0.0
+VISIBLE_VMAX = 1.0
+VISIBLE_TICKS = np.arange(0.0, 1.01, 0.2)
+
+
+def visible_cmap():
+    """Devuelve (cmap, norm) en escala de grises para reflectancia (0-1)."""
+    cmap = matplotlib.colormaps["gray"].copy()
+    cmap.set_bad("black")
+    norm = Normalize(vmin=VISIBLE_VMIN, vmax=VISIBLE_VMAX)
+    return cmap, norm
