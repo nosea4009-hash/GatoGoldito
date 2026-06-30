@@ -55,7 +55,8 @@ from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        visible_cmap, VISIBLE_TICKS,
                        rainbow_ir_cmap, RAINBOW_IR_TICKS,
                        nighttime_microphysics_rgb,
-                       midlevel_wv_cmap, WV_TICKS)
+                       midlevel_wv_cmap, WV_TICKS,
+                       resolve_cmap, SUGGESTED_METPY_CMAPS)
 from estaciones import load_stations
 
 warnings.filterwarnings("ignore")
@@ -513,10 +514,13 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
     is_rgb = (getattr(data, "ndim", 2) == 3)
     if not is_rgb:
         cmap, norm = product["cmap_fn"]()
-        # Override de colormap (--cmap) e inversion (--invert-cmap)
+        # Override de colormap (--cmap) e inversion (--invert-cmap).
+        # Soporta colormaps de matplotlib y colortables de MetPy (metpy_*).
         if cmap_name:
-            cmap = matplotlib.colormaps[cmap_name].copy()
-        if invert_cmap:
+            resolved = resolve_cmap(cmap_name, invert_cmap)
+            if resolved is not None:
+                cmap = resolved
+        elif invert_cmap:
             cmap = cmap.reversed()
         cmap.set_bad((0, 0, 0, 0) if product.get("kind") == "sandwich" else "black")
 
@@ -756,6 +760,11 @@ def print_listing():
     for i in range(0, len(SUGGESTED_CMAPS), 4):
         print("   " + "  ".join(f"{c:14s}" for c in SUGGESTED_CMAPS[i:i + 4]))
     print("   (Tambien sirve cualquier otro colormap valido de matplotlib.)")
+    print("\nCOLORTABLES de MetPy  (--cmap metpy_NOMBRE):")
+    for i in range(0, len(SUGGESTED_METPY_CMAPS), 4):
+        grp = [f"metpy_{c}" for c in SUGGESTED_METPY_CMAPS[i:i + 4]]
+        print("   " + "  ".join(f"{c:18s}" for c in grp))
+    print("   (Especificas de meteo: WV, IR realzado, radar. Ej: metpy_rainbow.)")
     print("   --invert-cmap  -> invierte el colormap elegido (o el del producto).")
     print("\nOTRAS OPCIONES:")
     print("   --estaciones           Superpone el modelo de estaciones del SMN.")
@@ -808,10 +817,11 @@ def main(argv=None):
         print_listing()
         return
 
-    # Validar colormap
-    if args.cmap and args.cmap not in matplotlib.colormaps:
-        print(f"[error] El colormap '{args.cmap}' no existe en matplotlib.")
-        print("        Usa --list para ver las colormaps sugeridas.")
+    # Validar colormap (matplotlib o colortable de MetPy con prefijo metpy_)
+    if args.cmap and resolve_cmap(args.cmap) is None:
+        print(f"[error] El colormap '{args.cmap}' no existe.")
+        print("        Usa --list para ver las colormaps sugeridas")
+        print("        (las de MetPy se invocan con prefijo, ej: metpy_rainbow).")
         return
 
     if args.time:

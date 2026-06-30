@@ -201,3 +201,55 @@ def midlevel_wv_cmap():
     cmap.set_bad("black")
     norm = Normalize(vmin=WV_VMIN, vmax=WV_VMAX)
     return cmap, norm
+
+
+
+# =============================================================================
+#     RESOLVEDOR DE COLORMAPS (matplotlib + colortables de MetPy)
+# =============================================================================
+# Permite usar tanto los colormaps de matplotlib (ej. "turbo", "rainbow") como
+# las colortables propias de MetPy, que NO estan registradas en matplotlib.
+# Las de MetPy se invocan con el prefijo "metpy_" para no chocar con nombres de
+# matplotlib (ej. matplotlib tiene "rainbow" y MetPy tiene otra "rainbow"):
+#
+#     --cmap rainbow         -> rainbow de matplotlib
+#     --cmap metpy_rainbow   -> rainbow de MetPy
+#     --cmap metpy_ir_tpc    -> colortable IR del TPC (MetPy)
+#
+# Util tambien para --invert-cmap (agrega el reverso).
+
+METPY_PREFIX = "metpy_"
+
+# Colortables de MetPy mas utiles para satelite (sin el sufijo "_r").
+SUGGESTED_METPY_CMAPS = [
+    "rainbow", "ir_tpc", "ir_bd", "ir_rgbv", "ir_drgb", "ir_tv1",
+    "WVCIMSS", "wv_tpc", "Carbone42",
+]
+
+
+def metpy_colortable_names():
+    """Nombres de colortables de MetPy disponibles (excluye las variantes _r)."""
+    from metpy.plots import ctables
+    return sorted(n for n in ctables.registry if not n.endswith("_r"))
+
+
+def resolve_cmap(name, invert=False):
+    """Devuelve un Colormap de matplotlib por nombre, o None si no existe.
+
+    Acepta colormaps de matplotlib o colortables de MetPy (prefijo 'metpy_').
+    """
+    cmap = None
+    if name.startswith(METPY_PREFIX):
+        from metpy.plots import ctables
+        key = name[len(METPY_PREFIX):]
+        reg = ctables.registry
+        if key in reg:
+            cmap = reg.get_colortable(key)
+    elif name in matplotlib.colormaps:
+        cmap = matplotlib.colormaps[name]
+    if cmap is None:
+        return None
+    cmap = cmap.copy()
+    if invert:
+        cmap = cmap.reversed()
+    return cmap
