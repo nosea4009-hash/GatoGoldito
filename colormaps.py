@@ -126,3 +126,48 @@ def rainbow_ir_cmap():
     cmap.set_bad((0, 0, 0, 0))  # transparente (deja ver el visible debajo)
     norm = Normalize(vmin=RAINBOW_IR_VMIN, vmax=RAINBOW_IR_VMAX)
     return cmap, norm
+
+
+
+# =============================================================================
+#     NIGHTTIME MICROPHYSICS RGB (producto "noche": modo nocturno del GOES)
+# =============================================================================
+# Compuesto RGB de 3 bandas IR (funciona de dia y de noche, no depende del sol).
+# Receta estandar EUMETSAT/CIRA (entradas en grados Celsius):
+#
+#   Rojo  = BT(12.3 um) - BT(10.3 um)   -> Banda 15 - Banda 13   [-4 ,  2] C
+#   Verde = BT(10.3 um) - BT(3.9  um)   -> Banda 13 - Banda  7   [ 0 , 10] C
+#   Azul  = BT(10.3 um)                 -> Banda 13              [-30.15, 19.85] C
+#
+# Interpretacion tipica:
+#   - Niebla / nubes bajas (stratus): tonos verde-azulados claros.
+#   - Nubes altas y profundas (convectivas): rojizas/marrones.
+#   - Superficie despejada de noche: oscura / azul-violacea.
+#
+# Las diferencias de temperatura son identicas en C o K, y el canal azul usa el
+# rango 243-293 K = -30.15 a 19.85 C, por eso se trabaja todo en Celsius.
+
+NTMICRO_RED   = (-4.0, 2.0)       # T(12.3) - T(10.3)
+NTMICRO_GREEN = (0.0, 10.0)       # T(10.3) - T(3.9)
+NTMICRO_BLUE  = (-30.15, 19.85)   # T(10.3)  (243.0 - 293.0 K)
+
+
+def _norm_channel(arr, vmin, vmax, gamma=1.0):
+    """Normaliza un canal al rango [0, 1] con recorte y correccion gamma opcional."""
+    out = (arr - vmin) / (vmax - vmin)
+    out = np.clip(out, 0.0, 1.0)
+    if gamma and gamma != 1.0:
+        out = np.power(out, 1.0 / gamma)
+    return out
+
+
+def nighttime_microphysics_rgb(t12_3, t10_3, t3_9):
+    """Construye el RGB Nighttime Microphysics. Entradas en C, devuelve (H, W, 3)."""
+    r = _norm_channel(t12_3 - t10_3, *NTMICRO_RED)
+    g = _norm_channel(t10_3 - t3_9, *NTMICRO_GREEN)
+    b = _norm_channel(t10_3,        *NTMICRO_BLUE)
+    rgb = np.dstack([r, g, b])
+    # Pixeles sin dato (NaN en cualquier banda) -> negro
+    bad = ~(np.isfinite(t12_3) & np.isfinite(t10_3) & np.isfinite(t3_9))
+    rgb[bad] = 0.0
+    return rgb

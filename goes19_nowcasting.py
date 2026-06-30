@@ -53,7 +53,8 @@ import metpy  # noqa: F401  (habilita el accessor .metpy en xarray)
 
 from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        visible_cmap, VISIBLE_TICKS,
-                       rainbow_ir_cmap, RAINBOW_IR_TICKS)
+                       rainbow_ir_cmap, RAINBOW_IR_TICKS,
+                       nighttime_microphysics_rgb)
 from estaciones import load_stations
 
 warnings.filterwarnings("ignore")
@@ -111,6 +112,26 @@ PRODUCTS = {
         "extend": "both",
         "ir_threshold": -20.0,   # solo colorea topes mas frios que esto
         "overlay_alpha": 0.85,   # transparencia del IR sobre el visible
+    },
+    "noche": {
+        # RGB Nighttime Microphysics (modo nocturno): combina 3 bandas IR.
+        # No usa colormap ni colorbar; se arma un compuesto RGB de 3 canales.
+        "bands": [15, 13, 7],    # 12.3, 10.3 y 3.9 um (R, base, G)
+        "kind": "rgb",
+        "slug": "NightMicro",
+        "title": "Nighttime Microphysics RGB",
+        "cbar_label": "RGB nocturno (microfisica de nubes)",
+        "cmap_fn": None,
+        "ticks": None,
+        "extend": "neither",
+        # Receta para la leyenda (etiqueta, color base de la barra de gradiente)
+        "rgb_channels": [
+            ("12.3 - 10.3 \u00b5m", (1.0, 0.25, 0.25)),
+            ("10.3 - 3.9 \u00b5m",  (0.25, 1.0, 0.25)),
+            ("10.3 \u00b5m",        (0.35, 0.45, 1.0)),
+        ],
+        "rgb_legend": ("Niebla / nubes bajas: verde-azulado claro     \u00b7     "
+                       "Nubes altas y profundas: rojizo"),
     },
 }
 DEFAULT_PRODUCT = "ir"
@@ -478,13 +499,15 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
               out_path, product, show_cities=True, stations=None,
               station_color=False, base_data=None, base_ext=None,
               cmap_name=None, invert_cmap=False):
-    cmap, norm = product["cmap_fn"]()
-    # Override de colormap (--cmap) e inversion (--invert-cmap)
-    if cmap_name:
-        cmap = matplotlib.colormaps[cmap_name].copy()
-    if invert_cmap:
-        cmap = cmap.reversed()
-    cmap.set_bad((0, 0, 0, 0) if product.get("kind") == "sandwich" else "black")
+    is_rgb = (getattr(data, "ndim", 2) == 3)
+    if not is_rgb:
+        cmap, norm = product["cmap_fn"]()
+        # Override de colormap (--cmap) e inversion (--invert-cmap)
+        if cmap_name:
+            cmap = matplotlib.colormaps[cmap_name].copy()
+        if invert_cmap:
+            cmap = cmap.reversed()
+        cmap.set_bad((0, 0, 0, 0) if product.get("kind") == "sandwich" else "black")
 
     fig = plt.figure(figsize=(10, 11.3), facecolor="white")
 
@@ -508,13 +531,18 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
                   cmap=vcmap, norm=vnorm, interpolation="nearest", zorder=0)
 
     # Dato de satelite (overlay). En sandwich, enmascara los topes calidos.
-    plot_data = data
-    thr = product.get("ir_threshold")
-    if thr is not None:
-        plot_data = np.ma.masked_greater(data, thr)
-    ax.imshow(plot_data, origin="upper", extent=ext_m, transform=geos,
-              cmap=cmap, norm=norm, interpolation="nearest",
-              alpha=product.get("overlay_alpha", 1.0), zorder=1)
+    if is_rgb:
+        # Compuesto RGB (H, W, 3): se grafica directo, sin cmap ni norm.
+        ax.imshow(data, origin="upper", extent=ext_m, transform=geos,
+                  interpolation="nearest", zorder=1)
+    else:
+        plot_data = data
+        thr = product.get("ir_threshold")
+        if thr is not None:
+            plot_data = np.ma.masked_greater(data, thr)
+        ax.imshow(plot_data, origin="upper", extent=ext_m, transform=geos,
+                  cmap=cmap, norm=norm, interpolation="nearest",
+                  alpha=product.get("overlay_alpha", 1.0), zorder=1)
 
     # Geografia
     ax.add_feature(_roads(), linewidth=0.5, zorder=3, alpha=0.9)
@@ -563,23 +591,50 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
              ha="center", va="center", fontproperties=FONT_REG, fontsize=11,
              color="#333333")
 
-    # --- Barra de color ---
-    cax = fig.add_axes([0.16, 0.115, 0.68, 0.018])
-    cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap),
-                      cax=cax, orientation="horizontal", extend=product["extend"])
-    cb.set_ticks(product["ticks"])
-    cb.ax.tick_params(labelsize=8, length=3)
-    for lbl in cb.ax.get_xticklabels():
-        lbl.set_fontproperties(FONT_REG)
-    cb.outline.set_linewidth(0.8)
+    # --- Barra de color / leyenda RGB ---
+    if is_rgb:
+        # Tres barras de gradiente (negro -> color) describiendo la receta RGB.
+        from matplotlib.colors import LinearSegmentedColormap as _LSC
+        grad = np.linspace(0, 1, 256).reshape(1, -1)
+        channels = product.get("rgb_channels", [])
+        bar_h, gap = 0.013, 0.005
+        x0, bar_w = 0.345, 0.36
+        y_top = 0.150
+        for i, (lbl, col) in enumerate(channels):
+            yb = y_top - i * (bar_h + gap)
+            bax = fig.add_axes([x0, yb, bar_w, bar_h])
+            bax.imshow(grad, aspect="auto",
+                       cmap=_LSC.from_list("ch", [(0, 0, 0), col]))
+            bax.set_xticks([]); bax.set_yticks([])
+            for s in bax.spines.values():
+                s.set_linewidth(0.6); s.set_edgecolor("#333333")
+            fig.text(x0 - 0.012, yb + bar_h / 2, lbl, ha="right", va="center",
+                     fontproperties=FONT_REG, fontsize=8, color="black")
+        # Leyenda interpretativa abajo
+        fig.text(0.5, 0.082, product.get("rgb_legend", ""), ha="center", va="center",
+                 fontproperties=FONT_REG, fontsize=8.5, color="#222222")
+        fig.text(0.5, 0.105, product["cbar_label"], ha="center", va="center",
+                 fontproperties=FONT_BOLD, fontsize=11, color="black")
+        # "Producto experimental" en rojo, arriba a la izquierda de las barras
+        fig.text(x0, y_top + bar_h + 0.012, EXPERIMENTAL_TEXT, ha="left", va="center",
+                 fontproperties=FONT_BOLD, fontsize=8, color="red")
+    else:
+        cax = fig.add_axes([0.16, 0.115, 0.68, 0.018])
+        cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap),
+                          cax=cax, orientation="horizontal", extend=product["extend"])
+        cb.set_ticks(product["ticks"])
+        cb.ax.tick_params(labelsize=8, length=3)
+        for lbl in cb.ax.get_xticklabels():
+            lbl.set_fontproperties(FONT_REG)
+        cb.outline.set_linewidth(0.8)
 
-    # "Producto experimental" en rojo pequeno ARRIBA de la barra
-    fig.text(0.16, 0.142, EXPERIMENTAL_TEXT, ha="left", va="center",
-             fontproperties=FONT_BOLD, fontsize=8, color="red")
+        # "Producto experimental" en rojo pequeno ARRIBA de la barra
+        fig.text(0.16, 0.142, EXPERIMENTAL_TEXT, ha="left", va="center",
+                 fontproperties=FONT_BOLD, fontsize=8, color="red")
 
-    # Etiqueta de la variable ABAJO de la barra
-    fig.text(0.5, 0.082, product["cbar_label"], ha="center", va="center",
-             fontproperties=FONT_BOLD, fontsize=11, color="black")
+        # Etiqueta de la variable ABAJO de la barra
+        fig.text(0.5, 0.082, product["cbar_label"], ha="center", va="center",
+                 fontproperties=FONT_BOLD, fontsize=11, color="black")
 
     # --- Marca abajo a la derecha ---
     fig.text(0.935, 0.038, BRAND_TEXT, ha="right", va="center",
@@ -610,6 +665,19 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
         vis_path, _ = find_abi(target, 2)
         base_data, base_ext, _g, _t = load_abi_subset(
             vis_path, extent, kind="reflectance", gamma=2.0)
+    elif prod["kind"] == "rgb":
+        # Nighttime Microphysics: bandas 15 (12.3 um), 13 (10.3 um), 7 (3.9 um)
+        p13, t_scan = find_abi(target, 13)
+        t13, ext_m, geos, t_scan = load_abi_subset(p13, extent, kind="temp")
+        p15, _ = find_abi(target, 15)
+        t15, _e15, _g15, _t15 = load_abi_subset(p15, extent, kind="temp")
+        p7, _ = find_abi(target, 7)
+        t7, _e7, _g7, _t7 = load_abi_subset(p7, extent, kind="temp")
+        # Las 3 bandas son de 2 km (misma grilla); recorte defensivo por las dudas
+        h = min(t13.shape[0], t15.shape[0], t7.shape[0])
+        w = min(t13.shape[1], t15.shape[1], t7.shape[1])
+        t13, t15, t7 = t13[:h, :w], t15[:h, :w], t7[:h, :w]
+        data = nighttime_microphysics_rgb(t15, t13, t7)
     else:
         abi_path, t_scan = find_abi(target, prod["band"])
         data, ext_m, geos, t_scan = load_abi_subset(
