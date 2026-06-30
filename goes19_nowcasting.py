@@ -81,6 +81,8 @@ REGIONS = {
     "norte":      [-67.0, -53.0, -30.0, -21.0],
     "misiones":   [-57.5, -53.2, -28.6, -25.2],
     "sur_brasil": [-58.0, -47.5, -34.0, -22.3],   # Parana + Santa Catarina + Rio Grande do Sul
+    # Triple Frontera: N de Misiones + O de Santa Catarina + SO de Parana + E de Paraguay
+    "triple_frontera": [-56.5, -51.8, -27.8, -24.0],
 }
 DEFAULT_REGION = "completo"
 
@@ -110,6 +112,9 @@ CITIES = [
     ("Posadas", -55.90, -27.37),
     ("Obera", -55.12, -27.49),
     ("Eldorado", -54.62, -26.40),
+    ("Puerto Iguazu", -54.57, -25.60),
+    ("Bernardo de Irigoyen", -53.65, -26.25),
+    ("San Vicente", -54.49, -26.99),
     ("Resistencia", -58.99, -27.46),
     ("Corrientes", -58.83, -27.47),
     ("Formosa", -58.17, -26.18),
@@ -127,10 +132,14 @@ CITIES = [
     ("Asuncion (PY)", -57.58, -25.30),
     ("Encarnacion (PY)", -55.87, -27.33),
     ("Ciudad del Este (PY)", -54.61, -25.51),
+    ("Salto del Guaira (PY)", -54.31, -24.06),
+    ("Hernandarias (PY)", -54.64, -25.40),
     # --- Brasil: Parana (PR) ---
     ("Curitiba (BR)", -49.27, -25.43),
     ("Foz do Iguacu (BR)", -54.59, -25.52),
     ("Cascavel (BR)", -53.46, -24.96),
+    ("Francisco Beltrao (BR)", -53.06, -26.08),
+    ("Pato Branco (BR)", -52.67, -26.23),
     ("Londrina (BR)", -51.16, -23.31),
     ("Maringa (BR)", -51.94, -23.42),
     ("Ponta Grossa (BR)", -50.16, -25.09),
@@ -139,6 +148,8 @@ CITIES = [
     ("Joinville (BR)", -48.85, -26.30),
     ("Blumenau (BR)", -49.07, -26.92),
     ("Chapeco (BR)", -52.62, -27.10),
+    ("Sao Miguel do Oeste (BR)", -53.52, -26.72),
+    ("Dionisio Cerqueira (BR)", -53.63, -26.26),
     ("Lages (BR)", -50.33, -27.82),
     ("Criciuma (BR)", -49.37, -28.68),
     # --- Brasil: Rio Grande do Sul (RS) ---
