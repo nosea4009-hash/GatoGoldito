@@ -43,6 +43,7 @@ matplotlib.use("Agg")  # backend sin pantalla (sandbox / servidor)
 import matplotlib.pyplot as plt
 from matplotlib import font_manager as fm
 from matplotlib.patches import Rectangle
+from matplotlib.path import Path as MplPath
 import matplotlib.patheffects as pe
 
 import cartopy.crs as ccrs
@@ -52,6 +53,7 @@ import metpy  # noqa: F401  (habilita el accessor .metpy en xarray)
 
 from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        visible_cmap, VISIBLE_TICKS)
+from estaciones import load_stations
 
 warnings.filterwarnings("ignore")
 
@@ -191,6 +193,15 @@ CITIES = [
 
 # --- Acumulacion de rayos GLM: minutos previos al tiempo de la imagen ---
 GLM_MINUTES = 10
+
+# --- Estaciones SMN ---
+STATION_CATALOG = os.path.join(HERE, "estaciones_smn.txt")  # catalogo (lat/lon)
+
+
+def _find_obs_file():
+    """Devuelve el archivo de observaciones 'estado_tiempo*.txt' mas reciente."""
+    files = sorted(glob.glob(os.path.join(HERE, "estado_tiempo*.txt")))
+    return files[-1] if files else None
 
 # =============================================================================
 #                              FUENTES (Open Sans)
@@ -350,10 +361,92 @@ def _roads():
 
 
 # =============================================================================
+#                   MODELO DE ESTACION (station plot)
+# =============================================================================
+def _circle_outline():
+    """Marcador de circulo (contorno) de radio unitario."""
+    return MplPath.unit_circle()
+
+
+def _wedge_marker(oktas):
+    """Marcador tipo 'pastel' relleno segun octas (0-8) para nubosidad WMO."""
+    frac = max(0.0, min(oktas / 8.0, 1.0))
+    if frac <= 0:
+        return None
+    # Cuna desde arriba (90 grados) en sentido horario
+    return MplPath.wedge(90 - 360 * frac, 90)
+
+
+def plot_stations(ax, stations, extent):
+    """Dibuja el modelo de estacion (nubosidad + barba de viento + T/Td/presion).
+
+    Dibujo con matplotlib nativo (evita el StationPlot de MetPy, incompatible con
+    matplotlib reciente). Textos en Open Sans Bold, blancos con contorno negro.
+    """
+    sel = [s for s in stations
+           if extent[0] <= s["lon"] <= extent[1] and extent[2] <= s["lat"] <= extent[3]]
+    if not sel:
+        return
+
+    stroke = [pe.withStroke(linewidth=1.6, foreground="black")]
+    pc = ccrs.PlateCarree()
+    lons = np.array([s["lon"] for s in sel])
+    lats = np.array([s["lat"] for s in sel])
+
+    # --- Circulo de nubosidad: contorno + relleno proporcional a las octas ---
+    circ = ax.scatter(lons, lats, transform=pc, marker=_circle_outline(), s=150,
+                      facecolors="none", edgecolors="white", linewidths=1.1, zorder=9)
+    circ.set_path_effects(stroke)
+    # Relleno por grupos de octas
+    by_okta = {}
+    for s in sel:
+        ok = s["sky_oktas"]
+        if ok and ok > 0:
+            by_okta.setdefault(min(ok, 8), []).append((s["lon"], s["lat"]))
+    for ok, pts in by_okta.items():
+        wm = _wedge_marker(ok)
+        if wm is None:
+            continue
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        fill = ax.scatter(xs, ys, transform=pc, marker=wm, s=150,
+                          facecolors="white", edgecolors="none", zorder=9)
+        fill.set_path_effects(stroke)
+
+    # --- Barba de viento (en nudos) ---
+    mask = np.array([s["has_wind"] for s in sel])
+    if mask.any():
+        u = np.array([s["u_kt"] for s in sel])
+        v = np.array([s["v_kt"] for s in sel])
+        b = ax.barbs(lons[mask], lats[mask], u[mask], v[mask], transform=pc,
+                     length=6.5, linewidth=0.9, color="white", zorder=9)
+        b.set_path_effects(stroke)
+
+    # --- Valores: T arriba-izq, Td abajo-izq, presion arriba-der ---
+    for s in sel:
+        px, py = ax.projection.transform_point(s["lon"], s["lat"], pc)
+        if not (np.isfinite(px) and np.isfinite(py)):
+            continue
+        common = dict(textcoords="offset points", color="white",
+                      fontproperties=FONT_BOLD, fontsize=8.5,
+                      path_effects=stroke, zorder=10, clip_on=True)
+        t, td, p = s["temp_c"], s["dewpoint_c"], s["pressure_hpa"]
+        if np.isfinite(t):
+            ax.annotate(f"{t:.0f}", (px, py), xytext=(-10, 7),
+                        ha="right", va="bottom", **common)
+        if np.isfinite(td):
+            ax.annotate(f"{td:.0f}", (px, py), xytext=(-10, -9),
+                        ha="right", va="top", **common)
+        if np.isfinite(p):
+            code = f"{int(round(p * 10)) % 1000:03d}"  # presion codificada (3 digitos)
+            ax.annotate(code, (px, py), xytext=(10, 7),
+                        ha="left", va="bottom", **common)
+
+
+# =============================================================================
 #                              PLOTEO PRINCIPAL
 # =============================================================================
 def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
-              out_path, product, show_cities=True):
+              out_path, product, show_cities=True, stations=None):
     cmap, norm = product["cmap_fn"]()
 
     fig = plt.figure(figsize=(10, 11.3), facecolor="white")
@@ -410,6 +503,10 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
                         fontproperties=FONT_BOLD, fontsize=7.5, color="white",
                         path_effects=stroke, zorder=7, va="bottom", ha="left")
 
+    # Modelo de estacion SMN (nubosidad + viento + T/Td/presion)
+    if stations:
+        plot_stations(ax, stations, extent)
+
     # --- Titulo ---
     fig.text(0.5, 0.945, f"GOES-19  \u00b7  {product['title']}",
              ha="center", va="center", fontproperties=FONT_BOLD, fontsize=15,
@@ -452,7 +549,8 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
 #                              ORQUESTACION
 # =============================================================================
 def render_one(target: dt.datetime, region: str, glm_minutes: int,
-               product: str = DEFAULT_PRODUCT, tag: str = None):
+               product: str = DEFAULT_PRODUCT, tag: str = None,
+               stations=None):
     prod = PRODUCTS[product]
     extent = REGIONS[region]
     abi_path, t_scan = find_abi(target, prod["band"])
@@ -461,14 +559,17 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
     glm_lon, glm_lat = load_glm_flashes(t_scan, glm_minutes)
     tag = tag or f"{t_scan:%Y%m%d_%H%M}"
     out_path = os.path.join(OUT_DIR, f"GOES19_{prod['slug']}_{region}_{tag}.png")
-    make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat, out_path, prod)
-    print(f"  [OK] {out_path}  ({t_scan:%H:%M} UTC, {glm_lon.size} rayos)")
+    make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat, out_path, prod,
+              stations=stations)
+    n_est = len([s for s in stations if extent[0] <= s["lon"] <= extent[1]
+                 and extent[2] <= s["lat"] <= extent[3]]) if stations else 0
+    print(f"  [OK] {out_path}  ({t_scan:%H:%M} UTC, {glm_lon.size} rayos, {n_est} estaciones)")
     return out_path
 
 
 def render_animation(end: dt.datetime, region: str, glm_minutes: int,
                      frames: int, step_min: int, interval_ms: int,
-                     product: str = DEFAULT_PRODUCT):
+                     product: str = DEFAULT_PRODUCT, stations=None):
     """Genera varios PNG y los combina en un GIF."""
     pngs = []
     print(f"Generando {frames} cuadros (cada {step_min} min)...")
@@ -476,7 +577,7 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
         target = end - dt.timedelta(minutes=step_min * i)
         try:
             pngs.append(render_one(target, region, glm_minutes, product,
-                                   tag=f"frame_{frames - 1 - i:02d}"))
+                                   tag=f"frame_{frames - 1 - i:02d}", stations=stations))
         except Exception as e:
             print(f"  [skip] {target:%H:%M} UTC -> {e}")
     if len(pngs) < 2:
@@ -506,6 +607,10 @@ def parse_args(argv=None):
                    help="Producto: ir (Topes de Nube B13) o visible (B2).")
     p.add_argument("--glm-window", type=int, default=GLM_MINUTES,
                    help="Minutos de rayos GLM a acumular (default 10).")
+    p.add_argument("--estaciones", action="store_true",
+                   help="Superponer modelo de estaciones del SMN.")
+    p.add_argument("--obs-file", default=None,
+                   help="Archivo de observaciones SMN (default: el estado_tiempo*.txt mas reciente).")
     p.add_argument("--animate", action="store_true", help="Generar GIF animado.")
     p.add_argument("--frames", type=int, default=6, help="Cuadros del GIF.")
     p.add_argument("--step", type=int, default=10, help="Minutos entre cuadros (ABI=10).")
@@ -522,11 +627,24 @@ def main(argv=None):
 
     print(f"GOES-19 | producto={args.product} | region={args.region} | "
           f"objetivo={target:%Y-%m-%d %H:%M} UTC")
+
+    stations = None
+    if args.estaciones:
+        obs_file = args.obs_file or _find_obs_file()
+        if obs_file and os.path.exists(STATION_CATALOG):
+            stations = load_stations(STATION_CATALOG, obs_file)
+            print(f"  Estaciones SMN: {len(stations)} cargadas desde {os.path.basename(obs_file)}")
+        else:
+            print("  [aviso] No se encontro el archivo de observaciones o el catalogo; "
+                  "se omiten las estaciones.")
+
     if args.animate:
         render_animation(target, args.region, args.glm_window,
-                         args.frames, args.step, args.interval, args.product)
+                         args.frames, args.step, args.interval, args.product,
+                         stations=stations)
     else:
-        render_one(target, args.region, args.glm_window, args.product)
+        render_one(target, args.region, args.glm_window, args.product,
+                   stations=stations)
 
 
 if __name__ == "__main__":
