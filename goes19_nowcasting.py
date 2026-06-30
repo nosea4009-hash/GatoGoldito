@@ -76,15 +76,17 @@ EXPERIMENTAL_TEXT = "PRODUCTO EXPERIMENTAL"
 
 # --- Regiones predefinidas: extent [lon_min, lon_max, lat_min, lat_max] ---
 REGIONS = {
-    "completo":  [-68.0, -52.0, -40.0, -22.0],   # Pampeana + Norte + Misiones
-    "pampeana":  [-66.0, -56.0, -40.0, -30.0],
-    "norte":     [-67.0, -53.0, -30.0, -21.0],
-    "misiones":  [-57.5, -53.2, -28.6, -25.2],
+    "completo":   [-68.0, -52.0, -40.0, -22.0],   # Pampeana + Norte + Misiones
+    "pampeana":   [-66.0, -56.0, -40.0, -30.0],
+    "norte":      [-67.0, -53.0, -30.0, -21.0],
+    "misiones":   [-57.5, -53.2, -28.6, -25.2],
+    "sur_brasil": [-58.0, -47.5, -34.0, -22.3],   # Parana + Santa Catarina + Rio Grande do Sul
 }
 DEFAULT_REGION = "completo"
 
 # --- Ciudades (nombre, lon, lat). Se filtran a las que caen dentro del extent ---
 CITIES = [
+    # --- Argentina ---
     ("Buenos Aires", -58.38, -34.61),
     ("La Plata", -57.95, -34.92),
     ("Rosario", -60.64, -32.95),
@@ -92,9 +94,19 @@ CITIES = [
     ("Santa Fe", -60.70, -31.63),
     ("Parana", -60.52, -31.73),
     ("Mar del Plata", -57.55, -38.00),
+    ("Bahia Blanca", -62.27, -38.72),
     ("Santa Rosa", -64.29, -36.62),
     ("Mendoza", -68.84, -32.89),
     ("San Luis", -66.34, -33.30),
+    ("Rio Cuarto", -64.35, -33.13),
+    ("Venado Tuerto", -61.97, -33.75),
+    ("San Nicolas", -60.22, -33.33),
+    ("Rafaela", -61.49, -31.25),
+    ("Concordia", -58.02, -31.39),
+    ("Gualeguaychu", -58.51, -33.01),
+    ("Reconquista", -59.65, -29.15),
+    ("Goya", -59.26, -29.14),
+    ("Paso de los Libres", -57.09, -29.71),
     ("Posadas", -55.90, -27.37),
     ("Obera", -55.12, -27.49),
     ("Eldorado", -54.62, -26.40),
@@ -106,8 +118,38 @@ CITIES = [
     ("Salta", -65.41, -24.79),
     ("Catamarca", -65.78, -28.47),
     ("La Rioja", -66.86, -29.41),
-    ("Encarnacion (PY)", -55.87, -27.33),
+    # --- Uruguay ---
+    ("Montevideo (UY)", -56.16, -34.90),
+    ("Salto (UY)", -57.96, -31.38),
+    ("Paysandu (UY)", -58.08, -32.32),
+    ("Rivera (UY)", -55.55, -30.90),
+    # --- Paraguay ---
     ("Asuncion (PY)", -57.58, -25.30),
+    ("Encarnacion (PY)", -55.87, -27.33),
+    ("Ciudad del Este (PY)", -54.61, -25.51),
+    # --- Brasil: Parana (PR) ---
+    ("Curitiba (BR)", -49.27, -25.43),
+    ("Foz do Iguacu (BR)", -54.59, -25.52),
+    ("Cascavel (BR)", -53.46, -24.96),
+    ("Londrina (BR)", -51.16, -23.31),
+    ("Maringa (BR)", -51.94, -23.42),
+    ("Ponta Grossa (BR)", -50.16, -25.09),
+    # --- Brasil: Santa Catarina (SC) ---
+    ("Florianopolis (BR)", -48.55, -27.59),
+    ("Joinville (BR)", -48.85, -26.30),
+    ("Blumenau (BR)", -49.07, -26.92),
+    ("Chapeco (BR)", -52.62, -27.10),
+    ("Lages (BR)", -50.33, -27.82),
+    ("Criciuma (BR)", -49.37, -28.68),
+    # --- Brasil: Rio Grande do Sul (RS) ---
+    ("Porto Alegre (BR)", -51.23, -30.03),
+    ("Caxias do Sul (BR)", -51.18, -29.17),
+    ("Passo Fundo (BR)", -52.41, -28.26),
+    ("Santa Maria (BR)", -53.81, -29.68),
+    ("Pelotas (BR)", -52.34, -31.77),
+    ("Rio Grande (BR)", -52.10, -32.03),
+    ("Uruguaiana (BR)", -57.09, -29.76),
+    ("Sant. do Livramento (BR)", -55.53, -30.89),
 ]
 
 # --- Acumulacion de rayos GLM: minutos previos al tiempo de la imagen ---
@@ -272,7 +314,9 @@ def make_plot(data_c, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
                              fill=False, edgecolor="black", linewidth=1.6, zorder=10))
 
     # --- Eje del mapa ---
-    ax = fig.add_axes([0.065, 0.205, 0.87, 0.70], projection=geos)
+    # Mismo ancho (0.87) y borde izquierdo (0.065); panel mas alto hacia abajo
+    # (borde inferior baja de 0.205 a 0.160, justo por encima del colorbar).
+    ax = fig.add_axes([0.065, 0.160, 0.87, 0.745], projection=geos)
     ax.set_extent(extent, crs=ccrs.PlateCarree())
     for spine in ax.spines.values():
         spine.set_edgecolor("black")
