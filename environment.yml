@@ -20,6 +20,9 @@ dependencies:
   - pyproj
   - shapely
   - pillow
+  # Lectura de GRIB2 (modelo GFS): usado por --shear (cizalladura / bulk shear)
+  - cfgrib
+  - eccodes
   # (opcional) entorno interactivo tipo notebook en VS Code:
   - jupyterlab
   - ipykernel
