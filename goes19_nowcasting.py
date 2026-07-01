@@ -58,7 +58,8 @@ from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        midlevel_wv_cmap, WV_TICKS,
                        resolve_cmap, SUGGESTED_METPY_CMAPS,
                        day_cloud_phase_rgb,
-                       custom_sandwich_cmap)
+                       custom_sandwich_cmap,
+                       ir_custom_cmap, ir_custom_sandwich_cmap, CUSTOM_CMAPS)
 from estaciones import load_stations, download_latest_obs
 import gfs_shear
 
@@ -185,6 +186,9 @@ SANDWICH_CMAPS = {
     "trp": {"cmap_fn": custom_sandwich_cmap,
            "ticks": np.arange(-90.0, -19.0, 10.0),
            "ir_threshold": -20.0},
+    "ir_custom": {"cmap_fn": ir_custom_sandwich_cmap,
+                 "ticks": np.arange(-90.0, -19.0, 10.0),
+                 "ir_threshold": -20.0},
 }
 DEFAULT_SANDWICH_CMAP = "rainbow"
 
@@ -892,6 +896,11 @@ def print_listing():
     for i in range(0, len(SUGGESTED_CMAPS), 4):
         print("   " + "  ".join(f"{c:14s}" for c in SUGGESTED_CMAPS[i:i + 4]))
     print("   (Tambien sirve cualquier otro colormap valido de matplotlib.)")
+    print("\nPALETAS PERSONALIZADAS TRP  (--cmap NOMBRE):")
+    for c in CUSTOM_CMAPS:
+        print(f"   {c}")
+    print("   (Mismo rango -90/+40 C que el producto 'ir'. Tambien disponibles")
+    print("    para el sandwich via --sandwich-cmap.)")
     print("\nCOLORTABLES de MetPy  (--cmap metpy_NOMBRE):")
     for i in range(0, len(SUGGESTED_METPY_CMAPS), 4):
         grp = [f"metpy_{c}" for c in SUGGESTED_METPY_CMAPS[i:i + 4]]
@@ -931,8 +940,8 @@ def parse_args(argv=None):
                    help="Producto: ir (Topes de Nube B13), visible (B2) o sandwich.")
     p.add_argument("--sandwich-cmap", default=DEFAULT_SANDWICH_CMAP,
                    choices=list(SANDWICH_CMAPS),
-                   help="Paleta del overlay IR en el sandwich: 'rainbow' (default) "
-                        "o 'trp' (tu paleta personalizada original).")
+                   help="Paleta del overlay IR en el sandwich: 'rainbow' (default), "
+                        "'trp' o 'ir_custom' (tus paletas personalizadas).")
     p.add_argument("--cmap", default=None,
                    help="Colormap de matplotlib a usar (ver --list). Default: el del producto.")
     p.add_argument("--invert-cmap", action="store_true",

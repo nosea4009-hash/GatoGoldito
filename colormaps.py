@@ -85,6 +85,68 @@ def cloudtop_cmap():
 COLORBAR_TICKS = np.arange(VMIN, VMAX + 1, 10)
 
 
+# =============================================================================
+#          PALETA "IR_custom" (segunda paleta personalizada del usuario)
+# =============================================================================
+# Misma calibracion posicion->temperatura que la paleta original (POS_WARM/
+# T_WARM y POS_COLD/T_COLD, arriba): posicion 15 = +40 C, posicion 254 = -90 C.
+# Solo cambian los COLORES.
+
+IR_CUSTOM_RAW_PALETTE = [
+    [15,  [0,   0,   0,   255]],
+    [33,  [61,  61,  61,  255]],
+    [52,  [145, 145, 145, 255]],
+    [70,  [158, 158, 158, 255]],
+    [125, [181, 181, 181, 255]],
+    [135, [227, 179, 179, 255]],
+    [144, [204, 61,  36,  255]],
+    [150, [204, 83,  50,  255]],
+    [159, [222, 134, 42,  255]],
+    [168, [240, 217, 72,  255]],
+    [177, [210, 227, 77,  255]],
+    [186, [0,   201, 34,  255]],
+    [195, [82,  227, 145, 255]],
+    [205, [74,  235, 181, 255]],
+    [214, [92,  186, 212, 255]],
+    [236, [145, 45,  186, 255]],
+    [254, [224, 168, 215, 255]],
+]
+
+
+def _build_custom_cmap(raw_palette, name):
+    """Construye un LinearSegmentedColormap a partir de una paleta [pos, RGBA],
+    usando la misma calibracion posicion->temperatura definida arriba."""
+    pts = []
+    for pos, (r, g, b, _a) in raw_palette:
+        temp = _pos_to_temp(pos)
+        pts.append((temp, (r / 255.0, g / 255.0, b / 255.0)))
+    pts.sort(key=lambda p: p[0])
+    span = VMAX - VMIN
+    norm_stops = [((t - VMIN) / span, c) for t, c in pts]
+    eps = 1e-6
+    for i in range(1, len(norm_stops)):
+        if norm_stops[i][0] <= norm_stops[i - 1][0]:
+            norm_stops[i] = (norm_stops[i - 1][0] + eps, norm_stops[i][1])
+    norm_stops[0] = (0.0, norm_stops[0][1])
+    norm_stops[-1] = (1.0, norm_stops[-1][1])
+    return LinearSegmentedColormap.from_list(name, norm_stops, N=256)
+
+
+def ir_custom_cmap():
+    """Devuelve (cmap, norm) de la paleta 'IR_custom' (mismo rango -90/+40 C)."""
+    cmap = _build_custom_cmap(IR_CUSTOM_RAW_PALETTE, "IR_custom")
+    cmap.set_bad("black")
+    norm = Normalize(vmin=VMIN, vmax=VMAX)
+    return cmap, norm
+
+
+# Nombres de colormaps personalizadas TRP, resolvibles via --cmap NOMBRE
+# (ademas de los colormaps de matplotlib y las colortables de MetPy).
+CUSTOM_CMAPS = {
+    "IR_custom": ir_custom_cmap,
+}
+
+
 
 # =============================================================================
 #                  CANAL VISIBLE (Banda 2) - reflectancia
@@ -236,10 +298,13 @@ def metpy_colortable_names():
 def resolve_cmap(name, invert=False):
     """Devuelve un Colormap de matplotlib por nombre, o None si no existe.
 
-    Acepta colormaps de matplotlib o colortables de MetPy (prefijo 'metpy_').
+    Acepta colormaps de matplotlib, colortables de MetPy (prefijo 'metpy_')
+    o paletas personalizadas TRP (ej. 'IR_custom').
     """
     cmap = None
-    if name.startswith(METPY_PREFIX):
+    if name in CUSTOM_CMAPS:
+        cmap, _norm = CUSTOM_CMAPS[name]()
+    elif name.startswith(METPY_PREFIX):
         from metpy.plots import ctables
         key = name[len(METPY_PREFIX):]
         reg = ctables.registry
@@ -314,6 +379,14 @@ def day_cloud_phase_rgb(bt10_3, refl1_6, refl0_64):
 def custom_sandwich_cmap():
     """Paleta TRP original (la de cloudtop_cmap) para el overlay del sandwich."""
     cmap, norm = cloudtop_cmap()
+    cmap = cmap.copy()
+    cmap.set_bad((0, 0, 0, 0))  # transparente (deja ver el visible debajo)
+    return cmap, norm
+
+
+def ir_custom_sandwich_cmap():
+    """Paleta 'IR_custom' (la segunda paleta personalizada) para el sandwich."""
+    cmap, norm = ir_custom_cmap()
     cmap = cmap.copy()
     cmap.set_bad((0, 0, 0, 0))  # transparente (deja ver el visible debajo)
     return cmap, norm
