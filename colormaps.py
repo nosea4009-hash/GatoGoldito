@@ -113,13 +113,26 @@ IR_CUSTOM_RAW_PALETTE = [
 ]
 
 
-def _build_custom_cmap(raw_palette, name):
-    """Construye un LinearSegmentedColormap a partir de una paleta [pos, RGBA],
-    usando la misma calibracion posicion->temperatura definida arriba."""
+# Escala de temperatura EXACTA (no lineal) provista por el usuario para
+# "IR_custom": cada valor corresponde, EN EL MISMO ORDEN, al color de la
+# misma posicion en IR_CUSTOM_RAW_PALETTE (17 temperaturas <-> 17 colores).
+# OJO: los saltos NO son uniformes (30 C entre 10 y -20, pero solo 5 C entre
+# -53 y -58); por eso no se puede derivar con la formula lineal posicion->temp
+# que usa la paleta TRP original (esa si es lineal).
+IR_CUSTOM_TEMPS = [
+    40, 31, 20, 10, -20, -25, -30, -33, -38, -43,
+    -48, -53, -58, -63, -68, -80, -90,
+]
+
+
+def ir_custom_cmap():
+    """Devuelve (cmap, norm) de la paleta 'IR_custom', calibrada con la escala
+    de temperatura EXACTA (no lineal) de IR_CUSTOM_TEMPS (mismo rango -90/+40 C
+    que el producto 'ir', pero con puntos de quiebre distintos)."""
     pts = []
-    for pos, (r, g, b, _a) in raw_palette:
-        temp = _pos_to_temp(pos)
+    for (_pos, (r, g, b, _a)), temp in zip(IR_CUSTOM_RAW_PALETTE, IR_CUSTOM_TEMPS):
         pts.append((temp, (r / 255.0, g / 255.0, b / 255.0)))
+
     pts.sort(key=lambda p: p[0])
     span = VMAX - VMIN
     norm_stops = [((t - VMIN) / span, c) for t, c in pts]
@@ -129,12 +142,8 @@ def _build_custom_cmap(raw_palette, name):
             norm_stops[i] = (norm_stops[i - 1][0] + eps, norm_stops[i][1])
     norm_stops[0] = (0.0, norm_stops[0][1])
     norm_stops[-1] = (1.0, norm_stops[-1][1])
-    return LinearSegmentedColormap.from_list(name, norm_stops, N=256)
 
-
-def ir_custom_cmap():
-    """Devuelve (cmap, norm) de la paleta 'IR_custom' (mismo rango -90/+40 C)."""
-    cmap = _build_custom_cmap(IR_CUSTOM_RAW_PALETTE, "IR_custom")
+    cmap = LinearSegmentedColormap.from_list("IR_custom", norm_stops, N=256)
     cmap.set_bad("black")
     norm = Normalize(vmin=VMIN, vmax=VMAX)
     return cmap, norm
