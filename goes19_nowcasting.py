@@ -57,7 +57,7 @@ from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        nighttime_microphysics_rgb,
                        midlevel_wv_cmap, WV_TICKS,
                        resolve_cmap, SUGGESTED_METPY_CMAPS)
-from estaciones import load_stations
+from estaciones import load_stations, download_latest_obs
 
 warnings.filterwarnings("ignore")
 
@@ -768,6 +768,9 @@ def print_listing():
     print("   --invert-cmap  -> invierte el colormap elegido (o el del producto).")
     print("\nOTRAS OPCIONES:")
     print("   --estaciones           Superpone el modelo de estaciones del SMN.")
+    print("   --actualizar           Descarga las observaciones MAS RECIENTES del")
+    print("                          SMN (tiempo presente) y las plotea. Implica")
+    print("                          --estaciones. Requiere internet.")
     print("   --estaciones-color     Estaciones coloreadas (T roja, Td verde).")
     print("   --animate              Genera un GIF animado (--frames, --step).")
     print("   --time \"YYYY-MM-DD HH:MM\"  Fecha/hora UTC (default: lo mas reciente).")
@@ -798,6 +801,9 @@ def parse_args(argv=None):
                    help="Minutos de rayos GLM a acumular (default 10).")
     p.add_argument("--estaciones", action="store_true",
                    help="Superponer modelo de estaciones del SMN.")
+    p.add_argument("--actualizar", action="store_true",
+                   help="Descarga las observaciones MAS RECIENTES del SMN (tiempo "
+                        "presente) antes de plotear. Implica --estaciones.")
     p.add_argument("--estaciones-color", action="store_true",
                    help="Estaciones coloreadas (T en rojo, Td en verde, P en blanco).")
     p.add_argument("--obs-file", default=None,
@@ -833,8 +839,19 @@ def main(argv=None):
           f"objetivo={target:%Y-%m-%d %H:%M} UTC")
 
     stations = None
-    if args.estaciones:
-        obs_file = args.obs_file or _find_obs_file()
+    if args.estaciones or args.actualizar:
+        obs_file = args.obs_file
+        # --actualizar: baja las observaciones mas recientes del SMN
+        if args.actualizar:
+            try:
+                obs_file = download_latest_obs(HERE)
+                print(f"  [SMN] Observaciones actualizadas: {os.path.basename(obs_file)}")
+            except Exception as e:
+                print(f"  [aviso] No se pudo descargar del SMN ({e}); "
+                      "se usara el archivo local mas reciente.")
+                obs_file = args.obs_file
+        if obs_file is None:
+            obs_file = _find_obs_file()
         if obs_file and os.path.exists(STATION_CATALOG):
             stations = load_stations(STATION_CATALOG, obs_file)
             print(f"  Estaciones SMN: {len(stations)} cargadas desde {os.path.basename(obs_file)}")

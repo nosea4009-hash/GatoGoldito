@@ -16,11 +16,41 @@ load_stations(catalogo, observaciones) -> lista de dicts con:
 """
 
 import re
+import os
+import io
 import math
+import zipfile
 import unicodedata
+import urllib.request
 
 ENCODING = "latin-1"
 KMH_TO_KT = 0.539957  # km/h -> nudos
+
+# --- Datos abiertos del SMN: "tiempo presente" (estado del tiempo actual) -----
+# Devuelve un ZIP que contiene 'estado_tiempo{YYYYMMDD}.txt' con las
+# observaciones mas recientes de las estaciones. Fuente: SMN (datos abiertos).
+SMN_TIEPRE_URL = "https://ssl.smn.gob.ar/dpd/zipopendata.php?dato=tiepre"
+_USER_AGENT = "Mozilla/5.0 (GOES19-Nowcasting; TRP Meteorologia)"
+
+
+def download_latest_obs(dest_dir, timeout=30):
+    """Descarga el 'tiempo presente' del SMN y extrae el estado_tiempo*.txt.
+
+    Devuelve la ruta local del .txt extraido. Lanza excepcion si algo falla
+    (el llamador decide como manejarlo, ej. usar un archivo local previo).
+    """
+    req = urllib.request.Request(SMN_TIEPRE_URL, headers={"User-Agent": _USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read()
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        txt_names = [n for n in zf.namelist() if n.lower().endswith(".txt")]
+        if not txt_names:
+            raise RuntimeError("El ZIP del SMN no contiene ningun .txt de observaciones.")
+        name = txt_names[0]
+        out_path = os.path.join(dest_dir, os.path.basename(name))
+        with zf.open(name) as src, open(out_path, "wb") as dst:
+            dst.write(src.read())
+    return out_path
 
 # Direcciones de viento (espanol) -> grados meteorologicos (desde donde sopla)
 WIND_DIRS = {
