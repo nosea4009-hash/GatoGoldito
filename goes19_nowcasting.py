@@ -59,6 +59,7 @@ from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        resolve_cmap, SUGGESTED_METPY_CMAPS,
                        day_cloud_phase_rgb)
 from estaciones import load_stations, download_latest_obs
+import gfs_shear
 
 warnings.filterwarnings("ignore")
 
@@ -525,13 +526,57 @@ def plot_stations(ax, stations, extent, colored=False):
                         ha="left", va="bottom", color=c_pres, **common)
 
 
+def _shear_stride(extent, target_count=12):
+    """Calcula el salto de muestreo de la grilla GFS (0.25 grados) segun el
+    ancho de la region, para no saturar el plot de barbas."""
+    width_deg = extent[1] - extent[0]
+    n_points = width_deg / 0.25
+    stride = max(1, int(round(n_points / target_count)))
+    return stride
+
+
+# Colores de la cizalladura (distintos al viento blanco de las estaciones)
+SHEAR_COLORS = {"deep": "#ff8c00", "low": "#00c8ff"}   # 0-6km naranja, 0-1km cian
+SHEAR_LABELS = {"deep": "Cizalladura 0-6 km (GFS)", "low": "Cizalladura 0-1 km (GFS)"}
+
+
+def plot_shear(ax, shear, extent, layer="deep"):
+    """Dibuja barbas de cizalladura (bulk shear) del GFS sobre el mapa.
+
+    layer: "deep" (0-6 km, aprox 500hPa-10m) o "low" (0-1 km, aprox 850hPa-10m).
+    """
+    lon, lat = shear["lon"], shear["lat"]
+    u = shear["u_deep"] if layer == "deep" else shear["u_low"]
+    v = shear["v_deep"] if layer == "deep" else shear["v_low"]
+
+    lon_m = (lon >= extent[0]) & (lon <= extent[1])
+    lat_m = (lat >= extent[2]) & (lat <= extent[3])
+    if not (lon_m.any() and lat_m.any()):
+        return
+    stride = _shear_stride(extent)
+    lon_idx = np.where(lon_m)[0][::stride]
+    lat_idx = np.where(lat_m)[0][::stride]
+    if lon_idx.size == 0 or lat_idx.size == 0:
+        return
+
+    lon2d, lat2d = np.meshgrid(lon[lon_idx], lat[lat_idx])
+    u2d = u[np.ix_(lat_idx, lon_idx)]
+    v2d = v[np.ix_(lat_idx, lon_idx)]
+
+    color = SHEAR_COLORS[layer]
+    stroke = [pe.withStroke(linewidth=1.3, foreground="black")]
+    b = ax.barbs(lon2d, lat2d, u2d, v2d, transform=ccrs.PlateCarree(),
+                length=6.5, linewidth=1.0, color=color, zorder=6)
+    b.set_path_effects(stroke)
+
+
 # =============================================================================
 #                              PLOTEO PRINCIPAL
 # =============================================================================
 def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
               out_path, product, show_cities=True, stations=None,
               station_color=False, base_data=None, base_ext=None,
-              cmap_name=None, invert_cmap=False):
+              cmap_name=None, invert_cmap=False, shear=None, shear_layer="deep"):
     is_rgb = (getattr(data, "ndim", 2) == 3)
     if not is_rgb:
         cmap, norm = product["cmap_fn"]()
@@ -619,6 +664,10 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
     if stations:
         plot_stations(ax, stations, extent, colored=station_color)
 
+    # Cizalladura (bulk shear) del GFS, como barbas de color
+    if shear is not None:
+        plot_shear(ax, shear, extent, layer=shear_layer)
+
     # --- Titulo ---
     fig.text(0.5, 0.945, f"GOES-19  \u00b7  {product['title']}",
              ha="center", va="center", fontproperties=FONT_BOLD, fontsize=15,
@@ -675,9 +724,14 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
     # --- Marca abajo a la derecha ---
     fig.text(0.935, 0.038, BRAND_TEXT, ha="right", va="center",
              fontproperties=FONT_REG, fontsize=10, color="#444444")
-    # GLM leyenda abajo izquierda
-    fig.text(0.065, 0.038, "\u2605  Rayos GLM", ha="left", va="center",
+    # GLM leyenda abajo izquierda (sube si hay leyenda de cizalladura debajo)
+    glm_y = 0.050 if shear is not None else 0.038
+    fig.text(0.065, glm_y, "\u2605  Rayos GLM", ha="left", va="center",
              fontproperties=FONT_REG, fontsize=9, color="#444444")
+    # Leyenda de cizalladura (si se ploteo), con margen seguro sobre el borde
+    if shear is not None:
+        fig.text(0.065, 0.030, SHEAR_LABELS[shear_layer], ha="left", va="center",
+                 fontproperties=FONT_REG, fontsize=8.5, color=SHEAR_COLORS[shear_layer])
 
     fig.savefig(out_path, dpi=130, facecolor="white", bbox_inches=None)
     plt.close(fig)
@@ -690,7 +744,8 @@ def make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat,
 def render_one(target: dt.datetime, region: str, glm_minutes: int,
                product: str = DEFAULT_PRODUCT, tag: str = None,
                stations=None, station_color=False,
-               cmap_name=None, invert_cmap=False):
+               cmap_name=None, invert_cmap=False,
+               show_shear=False, shear_layer="deep"):
     prod = PRODUCTS[product]
     extent = REGIONS[region]
     base_data = base_ext = None
@@ -735,12 +790,23 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
         data, ext_m, geos, t_scan = load_abi_subset(
             abi_path, extent, kind=prod["kind"], gamma=prod.get("gamma", 1.0))
     glm_lon, glm_lat = load_glm_flashes(t_scan, glm_minutes)
+
+    shear = None
+    if show_shear:
+        try:
+            shear = gfs_shear.compute_shear(t_scan, extent, DATA_DIR, region_tag=region)
+            print(f"  [GFS] Cizalladura: ciclo {shear['cycle']:%Y-%m-%d %H}Z "
+                  f"+{shear['fhour']}h (valido {shear['valid_time']:%H:%M} UTC)")
+        except Exception as e:
+            print(f"  [aviso] No se pudo obtener la cizalladura del GFS ({e}).")
+
     tag = tag or f"{t_scan:%Y%m%d_%H%M}"
     out_path = os.path.join(OUT_DIR, f"GOES19_{prod['slug']}_{region}_{tag}.png")
     make_plot(data, ext_m, geos, t_scan, extent, glm_lon, glm_lat, out_path, prod,
               stations=stations, station_color=station_color,
               base_data=base_data, base_ext=base_ext,
-              cmap_name=cmap_name, invert_cmap=invert_cmap)
+              cmap_name=cmap_name, invert_cmap=invert_cmap,
+              shear=shear, shear_layer=shear_layer)
     n_est = len([s for s in stations if extent[0] <= s["lon"] <= extent[1]
                  and extent[2] <= s["lat"] <= extent[3]]) if stations else 0
     print(f"  [OK] {out_path}  ({t_scan:%H:%M} UTC, {glm_lon.size} rayos, {n_est} estaciones)")
@@ -750,7 +816,8 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
 def render_animation(end: dt.datetime, region: str, glm_minutes: int,
                      frames: int, step_min: int, interval_ms: int,
                      product: str = DEFAULT_PRODUCT, stations=None,
-                     station_color=False, cmap_name=None, invert_cmap=False):
+                     station_color=False, cmap_name=None, invert_cmap=False,
+                     show_shear=False, shear_layer="deep"):
     """Genera varios PNG y los combina en un GIF."""
     pngs = []
     print(f"Generando {frames} cuadros (cada {step_min} min)...")
@@ -760,7 +827,8 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
             pngs.append(render_one(target, region, glm_minutes, product,
                                    tag=f"frame_{frames - 1 - i:02d}",
                                    stations=stations, station_color=station_color,
-                                   cmap_name=cmap_name, invert_cmap=invert_cmap))
+                                   cmap_name=cmap_name, invert_cmap=invert_cmap,
+                                   show_shear=show_shear, shear_layer=shear_layer))
         except Exception as e:
             print(f"  [skip] {target:%H:%M} UTC -> {e}")
     if len(pngs) < 2:
@@ -809,6 +877,9 @@ def print_listing():
     print("                          SMN (tiempo presente) y las plotea. Implica")
     print("                          --estaciones. Requiere internet.")
     print("   --estaciones-color     Estaciones coloreadas (T roja, Td verde).")
+    print("   --shear                Superpone cizalladura (bulk shear) del GFS")
+    print("                          como barbas de color (naranja=0-6km, cian=0-1km).")
+    print("   --shear-layer deep|low Capa de cizalladura (default: deep = 0-6km).")
     print("   --animate              Genera un GIF animado (--frames, --step).")
     print("   --time \"YYYY-MM-DD HH:MM\"  Fecha/hora UTC (default: lo mas reciente).")
     print("\nEJEMPLOS:")
@@ -845,6 +916,10 @@ def parse_args(argv=None):
                    help="Estaciones coloreadas (T en rojo, Td en verde, P en blanco).")
     p.add_argument("--obs-file", default=None,
                    help="Archivo de observaciones SMN (default: el estado_tiempo*.txt mas reciente).")
+    p.add_argument("--shear", action="store_true",
+                   help="Superpone barbas de cizalladura (bulk shear) del modelo GFS.")
+    p.add_argument("--shear-layer", default="deep", choices=["deep", "low"],
+                   help="Capa de cizalladura: 'deep' (0-6km, default) o 'low' (0-1km).")
     p.add_argument("--animate", action="store_true", help="Generar GIF animado.")
     p.add_argument("--frames", type=int, default=6, help="Cuadros del GIF.")
     p.add_argument("--step", type=int, default=10, help="Minutos entre cuadros (ABI=10).")
@@ -900,11 +975,13 @@ def main(argv=None):
         render_animation(target, args.region, args.glm_window,
                          args.frames, args.step, args.interval, args.product,
                          stations=stations, station_color=args.estaciones_color,
-                         cmap_name=args.cmap, invert_cmap=args.invert_cmap)
+                         cmap_name=args.cmap, invert_cmap=args.invert_cmap,
+                         show_shear=args.shear, shear_layer=args.shear_layer)
     else:
         render_one(target, args.region, args.glm_window, args.product,
                    stations=stations, station_color=args.estaciones_color,
-                   cmap_name=args.cmap, invert_cmap=args.invert_cmap)
+                   cmap_name=args.cmap, invert_cmap=args.invert_cmap,
+                   show_shear=args.shear, shear_layer=args.shear_layer)
 
 
 if __name__ == "__main__":
