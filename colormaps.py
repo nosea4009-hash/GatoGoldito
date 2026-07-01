@@ -300,3 +300,20 @@ def day_cloud_phase_rgb(bt10_3, refl1_6, refl0_64):
     bad = ~(np.isfinite(bt10_3) & np.isfinite(refl1_6) & np.isfinite(refl0_64))
     rgb[bad] = 0.0
     return rgb
+
+
+
+# =============================================================================
+#   PALETA PERSONALIZADA TRP para el SANDWICH (alternativa a la rainbow)
+# =============================================================================
+# Reutiliza EXACTAMENTE la paleta original del usuario (cloudtop_cmap, la misma
+# que usa el producto "ir"), pero con los pixeles enmascarados (topes calidos,
+# por encima del umbral del sandwich) TRANSPARENTES en vez de negros, para que
+# se siga viendo el canal visible debajo.
+
+def custom_sandwich_cmap():
+    """Paleta TRP original (la de cloudtop_cmap) para el overlay del sandwich."""
+    cmap, norm = cloudtop_cmap()
+    cmap = cmap.copy()
+    cmap.set_bad((0, 0, 0, 0))  # transparente (deja ver el visible debajo)
+    return cmap, norm

@@ -57,7 +57,8 @@ from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        nighttime_microphysics_rgb,
                        midlevel_wv_cmap, WV_TICKS,
                        resolve_cmap, SUGGESTED_METPY_CMAPS,
-                       day_cloud_phase_rgb)
+                       day_cloud_phase_rgb,
+                       custom_sandwich_cmap)
 from estaciones import load_stations, download_latest_obs
 import gfs_shear
 
@@ -169,6 +170,23 @@ PRODUCTS = {
     },
 }
 DEFAULT_PRODUCT = "ir"
+
+# --- Variantes de colormap para el overlay IR del producto "sandwich" -------
+# rainbow -> la matplotlib 'rainbow' (frio violeta, calido rojo), rango -90/-20.
+# trp     -> la paleta ORIGINAL personalizada del usuario (la del producto ir),
+#            con el mismo rango completo (-90 a +40 C) y transparente en calido.
+SANDWICH_CMAPS = {
+    "rainbow": {"cmap_fn": rainbow_ir_cmap, "ticks": RAINBOW_IR_TICKS,
+               "ir_threshold": -20.0},
+    # Ticks recortados a -90..-20 (igual que 'rainbow'): son los UNICOS colores
+    # que realmente se ven en el sandwich (lo mas calido que -20 queda
+    # transparente, dejando ver el visible debajo). Evita mostrar en la barra
+    # colores/temperaturas (grises, -10 a +40) que nunca aparecen en el mapa.
+    "trp": {"cmap_fn": custom_sandwich_cmap,
+           "ticks": np.arange(-90.0, -19.0, 10.0),
+           "ir_threshold": -20.0},
+}
+DEFAULT_SANDWICH_CMAP = "rainbow"
 
 # --- Colormaps sugeridas de matplotlib (cualquier nombre valido tambien sirve) ---
 # Utiles para realces de satelite. Se pueden invertir con --invert-cmap.
@@ -745,11 +763,18 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
                product: str = DEFAULT_PRODUCT, tag: str = None,
                stations=None, station_color=False,
                cmap_name=None, invert_cmap=False,
-               show_shear=False, shear_layer="deep"):
+               show_shear=False, shear_layer="deep",
+               sandwich_cmap=DEFAULT_SANDWICH_CMAP):
     prod = PRODUCTS[product]
     extent = REGIONS[region]
     base_data = base_ext = None
     if prod["kind"] == "sandwich":
+        # Variante de paleta para el overlay IR: 'rainbow' (default) o 'trp'
+        variant = SANDWICH_CMAPS[sandwich_cmap]
+        prod = dict(prod)  # copia: no mutar el diccionario global PRODUCTS
+        prod["cmap_fn"] = variant["cmap_fn"]
+        prod["ticks"] = variant["ticks"]
+        prod["ir_threshold"] = variant["ir_threshold"]
         # Overlay IR (Banda 13) + base Visible (Banda 2)
         ir_path, t_scan = find_abi(target, 13)
         data, ext_m, geos, t_scan = load_abi_subset(ir_path, extent, kind="temp")
@@ -817,7 +842,8 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
                      frames: int, step_min: int, interval_ms: int,
                      product: str = DEFAULT_PRODUCT, stations=None,
                      station_color=False, cmap_name=None, invert_cmap=False,
-                     show_shear=False, shear_layer="deep"):
+                     show_shear=False, shear_layer="deep",
+                     sandwich_cmap=DEFAULT_SANDWICH_CMAP):
     """Genera varios PNG y los combina en un GIF."""
     pngs = []
     print(f"Generando {frames} cuadros (cada {step_min} min)...")
@@ -828,7 +854,8 @@ def render_animation(end: dt.datetime, region: str, glm_minutes: int,
                                    tag=f"frame_{frames - 1 - i:02d}",
                                    stations=stations, station_color=station_color,
                                    cmap_name=cmap_name, invert_cmap=invert_cmap,
-                                   show_shear=show_shear, shear_layer=shear_layer))
+                                   show_shear=show_shear, shear_layer=shear_layer,
+                                   sandwich_cmap=sandwich_cmap))
         except Exception as e:
             print(f"  [skip] {target:%H:%M} UTC -> {e}")
     if len(pngs) < 2:
@@ -872,6 +899,9 @@ def print_listing():
     print("   (Especificas de meteo: WV, IR realzado, radar. Ej: metpy_rainbow.)")
     print("   --invert-cmap  -> invierte el colormap elegido (o el del producto).")
     print("\nOTRAS OPCIONES:")
+    print("   --sandwich-cmap rainbow|trp  Paleta del overlay IR en --product")
+    print("                          sandwich: 'rainbow' (default) o 'trp' (tu")
+    print("                          paleta personalizada original).")
     print("   --estaciones           Superpone el modelo de estaciones del SMN.")
     print("   --actualizar           Descarga las observaciones MAS RECIENTES del")
     print("                          SMN (tiempo presente) y las plotea. Implica")
@@ -899,6 +929,10 @@ def parse_args(argv=None):
                    help="Region a plotear.")
     p.add_argument("--product", default=DEFAULT_PRODUCT, choices=list(PRODUCTS),
                    help="Producto: ir (Topes de Nube B13), visible (B2) o sandwich.")
+    p.add_argument("--sandwich-cmap", default=DEFAULT_SANDWICH_CMAP,
+                   choices=list(SANDWICH_CMAPS),
+                   help="Paleta del overlay IR en el sandwich: 'rainbow' (default) "
+                        "o 'trp' (tu paleta personalizada original).")
     p.add_argument("--cmap", default=None,
                    help="Colormap de matplotlib a usar (ver --list). Default: el del producto.")
     p.add_argument("--invert-cmap", action="store_true",
@@ -976,12 +1010,14 @@ def main(argv=None):
                          args.frames, args.step, args.interval, args.product,
                          stations=stations, station_color=args.estaciones_color,
                          cmap_name=args.cmap, invert_cmap=args.invert_cmap,
-                         show_shear=args.shear, shear_layer=args.shear_layer)
+                         show_shear=args.shear, shear_layer=args.shear_layer,
+                         sandwich_cmap=args.sandwich_cmap)
     else:
         render_one(target, args.region, args.glm_window, args.product,
                    stations=stations, station_color=args.estaciones_color,
                    cmap_name=args.cmap, invert_cmap=args.invert_cmap,
-                   show_shear=args.shear, shear_layer=args.shear_layer)
+                   show_shear=args.shear, shear_layer=args.shear_layer,
+                   sandwich_cmap=args.sandwich_cmap)
 
 
 if __name__ == "__main__":
