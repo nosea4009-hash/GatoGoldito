@@ -253,3 +253,50 @@ def resolve_cmap(name, invert=False):
     if invert:
         cmap = cmap.reversed()
     return cmap
+
+
+
+# =============================================================================
+#     DAY CLOUD PHASE DISTINCTION RGB (JMA / CIRA / EUMETSAT)
+# =============================================================================
+# RGB diurno para distinguir la fase de las nubes (liquido/hielo) y particulas.
+# Receta estandar adaptada de JMA Himawari / CIRA GOES-R Quick Guides.
+#
+#   Rojo  = BT 10.3 um (Banda 13)        -> temperatura de brillo (C)
+#   Verde = Reflectancia 1.6 um (Banda 5) -> % (0-100)
+#   Azul  = Reflectancia 0.64 um (Banda 2) -> % (0-100)
+#
+# Interpretacion tipica:
+#   - Nubes profundas convectivas (topes frios de hielo): rojo/naranja
+#   - Nubes bajas/medias de agua liquida: verde/cyan
+#   - Superficie despejada / nubes muy bajas: azul
+#   - Nubes glaciadas: amarillo (mezcla rojo+verde)
+
+DAY_CLOUD_PHASE_RED   = (-70.0, 60.0)   # BT 10.3 um (C)
+DAY_CLOUD_PHASE_GREEN = (0.0, 60.0)     # Reflectancia 1.6 um (%)
+DAY_CLOUD_PHASE_BLUE  = (0.0, 100.0)    # Reflectancia 0.64 um (%)
+
+
+def day_cloud_phase_rgb(bt10_3, refl1_6, refl0_64):
+    """Construye el RGB Day Cloud Phase Distinction.
+
+    Entradas:
+      - bt10_3: temperatura de brillo Banda 13 (C)
+      - refl1_6: reflectancia Banda 5 (0-1) -> convertida internamente a %
+      - refl0_64: reflectancia Banda 2 (0-1) -> convertida internamente a %
+
+    Devuelve (H, W, 3) RGB normalizado [0, 1].
+    """
+    # Reflectancias de 0-1 a 0-100 (porcentaje)
+    r5_pct = refl1_6 * 100.0
+    r2_pct = refl0_64 * 100.0
+
+    r = _norm_channel(bt10_3, *DAY_CLOUD_PHASE_RED)
+    g = _norm_channel(r5_pct, *DAY_CLOUD_PHASE_GREEN)
+    b = _norm_channel(r2_pct, *DAY_CLOUD_PHASE_BLUE)
+
+    rgb = np.dstack([r, g, b])
+    # Pixeles sin dato -> negro
+    bad = ~(np.isfinite(bt10_3) & np.isfinite(refl1_6) & np.isfinite(refl0_64))
+    rgb[bad] = 0.0
+    return rgb

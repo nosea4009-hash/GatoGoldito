@@ -56,7 +56,8 @@ from colormaps import (cloudtop_cmap, COLORBAR_TICKS, VMIN, VMAX,
                        rainbow_ir_cmap, RAINBOW_IR_TICKS,
                        nighttime_microphysics_rgb,
                        midlevel_wv_cmap, WV_TICKS,
-                       resolve_cmap, SUGGESTED_METPY_CMAPS)
+                       resolve_cmap, SUGGESTED_METPY_CMAPS,
+                       day_cloud_phase_rgb)
 from estaciones import load_stations, download_latest_obs
 
 warnings.filterwarnings("ignore")
@@ -144,6 +145,26 @@ PRODUCTS = {
         ],
         "rgb_legend": ("Niebla / nubes bajas: verde-azulado claro     \u00b7     "
                        "Nubes altas y profundas: rojizo"),
+    },
+    "day_phase": {
+        # RGB Day Cloud Phase Distinction (JMA/CIRA): discrimina fase de nubes
+        # (liquido vs hielo) y tipo de particulas. Solo diurno.
+        "bands": [13, 5, 2],     # 10.3 um (BT), 1.6 um (refl), 0.64 um (refl)
+        "kind": "rgb",
+        "slug": "DayPhase",
+        "title": "Day Cloud Phase Distinction RGB (JMA)",
+        "cbar_label": "RGB diurno (discriminacion de fase de nubes)",
+        "cmap_fn": None,
+        "ticks": None,
+        "extend": "neither",
+        "rgb_channels": [
+            ("10.3 \u00b5m (BT)",   (1.0, 0.30, 0.30)),
+            ("1.6 \u00b5m (refl)",  (0.30, 1.0, 0.30)),
+            ("0.64 \u00b5m (refl)", (0.40, 0.50, 1.0)),
+        ],
+        "rgb_legend": ("Topes frios/hielo: rojo/naranja     \u00b7     "
+                       "Nubes bajas liquidas: verde/cyan     \u00b7     "
+                       "Superficie despejada: azul"),
     },
 }
 DEFAULT_PRODUCT = "ir"
@@ -682,17 +703,33 @@ def render_one(target: dt.datetime, region: str, glm_minutes: int,
             vis_path, extent, kind="reflectance", gamma=2.0)
     elif prod["kind"] == "rgb":
         # Nighttime Microphysics: bandas 15 (12.3 um), 13 (10.3 um), 7 (3.9 um)
-        p13, t_scan = find_abi(target, 13)
-        t13, ext_m, geos, t_scan = load_abi_subset(p13, extent, kind="temp")
-        p15, _ = find_abi(target, 15)
-        t15, _e15, _g15, _t15 = load_abi_subset(p15, extent, kind="temp")
-        p7, _ = find_abi(target, 7)
-        t7, _e7, _g7, _t7 = load_abi_subset(p7, extent, kind="temp")
-        # Las 3 bandas son de 2 km (misma grilla); recorte defensivo por las dudas
-        h = min(t13.shape[0], t15.shape[0], t7.shape[0])
-        w = min(t13.shape[1], t15.shape[1], t7.shape[1])
-        t13, t15, t7 = t13[:h, :w], t15[:h, :w], t7[:h, :w]
-        data = nighttime_microphysics_rgb(t15, t13, t7)
+        if product == "noche":
+            p13, t_scan = find_abi(target, 13)
+            t13, ext_m, geos, t_scan = load_abi_subset(p13, extent, kind="temp")
+            p15, _ = find_abi(target, 15)
+            t15, _e15, _g15, _t15 = load_abi_subset(p15, extent, kind="temp")
+            p7, _ = find_abi(target, 7)
+            t7, _e7, _g7, _t7 = load_abi_subset(p7, extent, kind="temp")
+            # Las 3 bandas son de 2 km (misma grilla); recorte defensivo por las dudas
+            h = min(t13.shape[0], t15.shape[0], t7.shape[0])
+            w = min(t13.shape[1], t15.shape[1], t7.shape[1])
+            t13, t15, t7 = t13[:h, :w], t15[:h, :w], t7[:h, :w]
+            data = nighttime_microphysics_rgb(t15, t13, t7)
+        # Day Cloud Phase: Banda 13 (BT 10.3um), Banda 5 (refl 1.6um), Banda 2 (refl 0.64um)
+        elif product == "day_phase":
+            p13, t_scan = find_abi(target, 13)
+            bt13, ext_m, geos, t_scan = load_abi_subset(p13, extent, kind="temp")
+            p5, _ = find_abi(target, 5)
+            r5, _e5, _g5, _t5 = load_abi_subset(p5, extent, kind="reflectance")
+            p2, _ = find_abi(target, 2)
+            r2, _e2, _g2, _t2 = load_abi_subset(p2, extent, kind="reflectance")
+            # Banda 2 es 0.5 km, Banda 5 es 1 km, Banda 13 es 2 km -> recortar a la mas tosca
+            h = min(bt13.shape[0], r5.shape[0], r2.shape[0])
+            w = min(bt13.shape[1], r5.shape[1], r2.shape[1])
+            bt13, r5, r2 = bt13[:h, :w], r5[:h, :w], r2[:h, :w]
+            data = day_cloud_phase_rgb(bt13, r5, r2)
+        else:
+            raise ValueError(f"Producto RGB '{product}' no reconocido.")
     else:
         abi_path, t_scan = find_abi(target, prod["band"])
         data, ext_m, geos, t_scan = load_abi_subset(
